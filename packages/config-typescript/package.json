@@ -1,0 +1,24 @@
+{
+  "name": "@tenue/config-typescript",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "base.json",
+    "expo.json",
+    "next.json"
+  ],
+  "exports": {
+    "./base.json": "./base.json",
+    "./expo.json": "./expo.json",
+    "./next.json": "./next.json"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "lint": "node -e \"process.exit(0)\"",
+    "typecheck": "node -e \"process.exit(0)\"",
+    "test": "node -e \"process.exit(0)\"",
+    "format": "node -e \"process.exit(0)\""
+  }
+}

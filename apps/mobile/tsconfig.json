@@ -1,0 +1,12 @@
+{
+  "extends": "@tenue/config-typescript/expo.json",
+  "compilerOptions": {
+    "baseUrl": "."
+  },
+  "include": [
+    "app",
+    "src",
+    "expo-env.d.ts",
+    ".expo/types/**/*.ts"
+  ]
+}

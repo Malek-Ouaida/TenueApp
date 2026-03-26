@@ -1,0 +1,10 @@
+packages:
+  - apps/mobile
+  - apps/web
+  - packages/*
+
+ignoredBuiltDependencies:
+  - sharp
+
+onlyBuiltDependencies:
+  - supabase

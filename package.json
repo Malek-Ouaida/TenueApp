@@ -1,0 +1,31 @@
+{
+  "name": "tenue",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n mobile,web,api \"pnpm dev:mobile\" \"pnpm dev:web\" \"pnpm dev:api\"",
+    "dev:mobile": "turbo run dev --filter=@tenue/mobile",
+    "dev:web": "turbo run dev --filter=@tenue/web",
+    "dev:api": "bash ./scripts/api/dev.sh",
+    "infra:up": "bash ./scripts/infra/up.sh",
+    "infra:down": "bash ./scripts/infra/down.sh",
+    "infra:status": "bash ./scripts/infra/status.sh",
+    "db:migrate": "bash ./scripts/api/migrate.sh",
+    "db:revision": "bash ./scripts/api/revision.sh",
+    "lint": "turbo run lint && bash ./scripts/api/lint.sh",
+    "typecheck": "turbo run typecheck && bash ./scripts/api/typecheck.sh",
+    "test": "turbo run test && bash ./scripts/api/test.sh",
+    "format": "turbo run format && bash ./scripts/api/format.sh"
+  },
+  "devDependencies": {
+    "concurrently": "9.2.1",
+    "metro-runtime": "0.83.3",
+    "supabase": "2.84.4",
+    "turbo": "2.8.20"
+  }
+}

@@ -1,0 +1,47 @@
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+supabase/.temp/
+supabase/.branches/
+
+# Node / pnpm / Turbo
+node_modules/
+.pnpm-store/
+.turbo/
+dist/
+build/
+coverage/
+
+# Expo / React Native
+.expo/
+.expo-shared/
+
+# Next.js
+.next/
+out/
+
+# Python
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.py[cod]
+*.db
+
+# Test artifacts
+.coverage
+htmlcov/
+
+# Logs
+*.log

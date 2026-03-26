@@ -1,0 +1,30 @@
+{
+  "name": "@tenue/config-eslint",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "base.cjs",
+    "expo.cjs",
+    "next.cjs"
+  ],
+  "exports": {
+    "./base": "./base.cjs",
+    "./expo": "./expo.cjs",
+    "./next": "./next.cjs"
+  },
+  "peerDependencies": {
+    "eslint": "^9.0.0"
+  },
+  "dependencies": {
+    "@eslint/js": "^9.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "globals": "^15.0.0"
+  },
+  "scripts": {
+    "lint": "node -e \"process.exit(0)\"",
+    "typecheck": "node -e \"process.exit(0)\"",
+    "test": "node -e \"process.exit(0)\"",
+    "format": "node -e \"process.exit(0)\""
+  }
+}

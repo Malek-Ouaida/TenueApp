@@ -1,0 +1,29 @@
+{
+  "name": "@tenue/web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "node -e \"console.log('apps/web: no automated tests for Phase 03 auth integration yet')\"",
+    "format": "node -e \"console.log('apps/web: no formatter changes in Phase 03 auth foundation')\""
+  },
+  "dependencies": {
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@next/eslint-plugin-next": "^15.0.0",
+    "@tenue/config-eslint": "workspace:*",
+    "@tenue/config-typescript": "workspace:*",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.0.0"
+  }
+}
