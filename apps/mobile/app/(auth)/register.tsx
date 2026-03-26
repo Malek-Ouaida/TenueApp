@@ -17,11 +17,13 @@ export default function RegisterScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit() {
     setIsSubmitting(true);
     setError(null);
+    setNotice(null);
 
     const result = await registerWithPassword(email, password);
     setIsSubmitting(false);
@@ -31,7 +33,13 @@ export default function RegisterScreen() {
       return;
     }
 
-    router.replace("/");
+    if (result.nextStep === "authenticated") {
+      router.replace("/");
+      return;
+    }
+
+    setPassword("");
+    setNotice(result.message);
   }
 
   return (
@@ -66,6 +74,7 @@ export default function RegisterScreen() {
         />
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
+        {notice ? <Text style={styles.notice}>{notice}</Text> : null}
 
         <Pressable style={styles.primaryButton} onPress={() => void handleSubmit()} disabled={isSubmitting}>
           {isSubmitting ? (
@@ -129,6 +138,11 @@ const styles = StyleSheet.create({
   },
   error: {
     color: "#a53f33",
+    fontSize: 14,
+    lineHeight: 20
+  },
+  notice: {
+    color: "#2f6f54",
     fontSize: 14,
     lineHeight: 20
   },

@@ -12,6 +12,7 @@ import { getMe, login, logout, refreshSession, register } from "./client";
 import { clearStoredSession, loadStoredSession, persistStoredSession } from "./storage";
 import type {
   AuthResult,
+  AuthRegistrationResponse,
   AuthSession,
   AuthStatus,
   AuthUser
@@ -131,7 +132,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setStatus("authenticated");
       });
 
-      return { ok: true };
+      return { ok: true, nextStep: "authenticated" };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Authentication failed.";
       return {
@@ -146,7 +147,38 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   async function registerWithPassword(email: string, password: string): Promise<AuthResult> {
-    return authenticate(() => register({ email, password }));
+    try {
+      const response: AuthRegistrationResponse = await register({ email, password });
+
+      if (response.session) {
+        await persistStoredSession(response.session);
+        startTransition(() => {
+          setUser(response.user);
+          setSession(response.session);
+          setStatus("authenticated");
+        });
+
+        return { ok: true, nextStep: "authenticated" };
+      }
+
+      startTransition(() => {
+        setUser(null);
+        setSession(null);
+        setStatus("anonymous");
+      });
+
+      return {
+        ok: true,
+        nextStep: "verify_email",
+        message: "Check your email to verify your account, then sign in."
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Authentication failed.";
+      return {
+        ok: false,
+        error: message
+      };
+    }
   }
 
   async function logoutCurrentUser(): Promise<void> {

@@ -10,7 +10,7 @@ type AuthLayoutProps = {
 export default async function AuthLayout({ children }: AuthLayoutProps) {
   const session = await resolveSession();
   if (session) {
-    redirect("/");
+    redirect("/profile");
   }
 
   return children;

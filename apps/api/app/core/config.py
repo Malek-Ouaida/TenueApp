@@ -18,8 +18,16 @@ class Settings:
     environment: str
     database_url: str
     supabase_url: str
-    supabase_anon_key: str
+    supabase_client_key: str
     supabase_auth_timeout_seconds: float
+
+
+def load_supabase_client_key() -> str:
+    publishable_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
+    if publishable_key:
+        return publishable_key
+
+    return os.getenv("SUPABASE_ANON_KEY", "").strip()
 
 
 def load_settings() -> Settings:
@@ -28,7 +36,7 @@ def load_settings() -> Settings:
         environment=os.getenv("APP_ENV", os.getenv("TENUE_ENV", "development")),
         database_url=os.getenv("DATABASE_URL", LOCAL_SUPABASE_DATABASE_URL),
         supabase_url=os.getenv("SUPABASE_URL", "http://127.0.0.1:54321"),
-        supabase_anon_key=os.getenv("SUPABASE_ANON_KEY", ""),
+        supabase_client_key=load_supabase_client_key(),
         supabase_auth_timeout_seconds=float(os.getenv("SUPABASE_AUTH_TIMEOUT_SECONDS", "10")),
     )
 

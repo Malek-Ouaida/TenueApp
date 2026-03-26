@@ -15,7 +15,7 @@ Phase 03 local development uses:
 - Docker + Docker Compose
 - Supabase CLI
 
-The Supabase CLI can be installed globally, or made available through a local project install. The repo scripts expect a working `supabase` command on your path.
+The Supabase CLI can be installed globally, or made available through the repo-local `node_modules/.bin/supabase`. The infra scripts resolve either option automatically.
 
 ## Env setup
 
@@ -28,13 +28,13 @@ cp apps/web/.env.example apps/web/.env.local
 cp apps/mobile/.env.example apps/mobile/.env
 ```
 
-After the stack is up, copy the local Supabase anon key into `apps/api/.env`:
+After the stack is up, copy the local Supabase publishable key into `apps/api/.env`:
 
 ```bash
 pnpm infra:status
 ```
 
-Use the reported API gateway URL for `SUPABASE_URL` if you are not using the default `http://127.0.0.1:54321`, then set `SUPABASE_ANON_KEY` from the same status output.
+Use the reported API gateway URL for `SUPABASE_URL` if you are not using the default `http://127.0.0.1:54321`, then set `SUPABASE_PUBLISHABLE_KEY` from the same status output. Older Supabase setups can keep using `SUPABASE_ANON_KEY`; the API accepts either env name.
 
 ## Start local infra
 
@@ -56,6 +56,14 @@ The default local Postgres URL is:
 ```text
 postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres
 ```
+
+For a hosted Supabase project, the API expects a SQLAlchemy URL using the `psycopg` driver:
+
+```text
+postgresql+psycopg://postgres.<project_ref>:<password>@<region>.pooler.supabase.com:5432/postgres?sslmode=require
+```
+
+If your hosted password contains reserved URL characters, URL-encode it before putting it in `DATABASE_URL`.
 
 The default MinIO bucket is:
 

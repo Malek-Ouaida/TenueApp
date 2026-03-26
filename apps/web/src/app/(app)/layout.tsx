@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 
 import { logoutAction } from "../actions/auth";
 import { requireSession } from "../../lib/auth/session";
@@ -14,11 +15,16 @@ export default async function AppLayout({ children }: AppLayoutProps) {
     <div className="app-shell">
       <header className="app-header">
         <div>
-          <p className="eyebrow">Protected Shell</p>
-          <h1 className="app-title">Tenue Auth Foundation</h1>
+          <p className="eyebrow">Tenue</p>
+          <Link className="app-title-link" href="/profile">
+            <h1 className="app-title">Profile Identity</h1>
+          </Link>
         </div>
 
         <div className="app-header-actions">
+          <Link className="ghost-link" href="/profile">
+            My profile
+          </Link>
           <span className="app-user-chip">{session.user.email}</span>
           <form action={logoutAction}>
             <button className="ghost-button" type="submit">

@@ -2,7 +2,7 @@
 
 Tenue is an AI-powered closet companion with a closet-first architecture.
 
-This repository is currently at **Phase 03: auth foundation**. The goal of this phase is to establish user identity, session handling, protected user scope, and thin client auth integration without implementing any product-domain behavior yet.
+This repository currently includes the **Phase 03 auth foundation** plus an early **user profile foundation** slice. The current goal is still to keep identity, session handling, and profile-shell work in place without drifting into lookbook, stats, or social behavior.
 
 ## Stack
 
@@ -45,9 +45,9 @@ This repository is currently at **Phase 03: auth foundation**. The goal of this 
 
 ## Current app state
 
-- `apps/mobile` now includes register/login screens, secure session persistence, and a protected shell
-- `apps/web` now includes register/login pages, cookie-backed session handling, and a protected shell
-- `apps/api` now includes a dedicated auth domain, a `users` table, and auth endpoints
+- `apps/mobile` now includes register/login screens, secure session persistence, and an authenticated `/profile` shell
+- `apps/web` now includes register/login pages, cookie-backed session handling, and a profile shell at `/profile`
+- `apps/api` now includes a dedicated auth domain, a `users` table, auth endpoints, and profile identity endpoints under `/profiles/*`
 - Alembic is configured for an env-driven Postgres database URL
 - local infra workflows exist for Supabase Postgres and MinIO
 - no closet, uploads, storage integration, or AI features have been implemented yet
@@ -68,6 +68,8 @@ This repository is currently at **Phase 03: auth foundation**. The goal of this 
 - `pnpm test`: runs JS/TS workspace test tasks and the API test wrapper
 - `pnpm format`: runs JS/TS workspace format tasks and the API format wrapper
 
+For Expo Go on a physical device, `apps/mobile` can derive the local API host from the Metro dev server when `EXPO_PUBLIC_API_BASE_URL` is unset. `pnpm dev:api` now binds the API on `0.0.0.0` by default so devices on the same LAN can reach it.
+
 ## Workspace rules
 
 - `apps/api` is a Python project and **must not** be added to `pnpm-workspace.yaml`
@@ -86,6 +88,14 @@ This repository is currently at **Phase 03: auth foundation**. The goal of this 
 - web and mobile do not connect directly to the database
 - `pnpm dev` does not start local infra automatically
 
+## API env notes
+
+- `DATABASE_URL` must use the SQLAlchemy driver form `postgresql+psycopg://...`
+- the API accepts `SUPABASE_PUBLISHABLE_KEY` and still falls back to the older `SUPABASE_ANON_KEY` env name
+- hosted Supabase session-pooler example: `postgresql+psycopg://postgres.<project_ref>:<password>@<region>.pooler.supabase.com:5432/postgres?sslmode=require`
+- `SUPABASE_URL` should be the project base URL such as `https://<project_ref>.supabase.co`
+- if your database password contains reserved URL characters, URL-encode it before placing it in `DATABASE_URL`
+
 ## Phase plans
 
 - roadmap: [ROADMAP.md](./ROADMAP.md)
@@ -94,3 +104,4 @@ This repository is currently at **Phase 03: auth foundation**. The goal of this 
 - Phase 00 plan: [plans/phases/phase-00/phase-00-monorepo-foundation.md](./plans/phases/phase-00/phase-00-monorepo-foundation.md)
 - Phase 01 plan: [plans/phases/phase-01/phase-01-app-scaffolds.md](./plans/phases/phase-01/phase-01-app-scaffolds.md)
 - Phase 03 plan: [plans/phases/phase-03/phase-03-auth-foundation.md](./plans/phases/phase-03/phase-03-auth-foundation.md)
+- Profile foundation plan: [plans/phase-05-user-profile-foundation.md](./plans/phase-05-user-profile-foundation.md)

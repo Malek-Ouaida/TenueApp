@@ -16,6 +16,10 @@ class User(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    username: Mapped[str | None] = mapped_column(String(30), unique=True, index=True, nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    bio: Mapped[str | None] = mapped_column(String(280), nullable=True)
+    avatar_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     auth_provider: Mapped[str] = mapped_column(String(32), default="supabase")
     auth_subject: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -25,3 +29,7 @@ class User(Base):
         onupdate=utcnow,
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def avatar_url(self) -> str | None:
+        return self.avatar_path

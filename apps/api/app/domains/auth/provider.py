@@ -28,12 +28,19 @@ class ProviderSession:
     expires_at: datetime | None
 
 
+@dataclass(frozen=True)
+class ProviderRegistration:
+    user: ProviderUser
+    session: ProviderSession | None
+    email_verification_required: bool
+
+
 class SupabaseAuthProvider:
     def __init__(
         self,
         *,
         base_url: str,
-        anon_key: str,
+        api_key: str,
         timeout_seconds: float = 10.0,
     ) -> None:
         normalized_base_url = base_url.rstrip("/")
@@ -41,12 +48,12 @@ class SupabaseAuthProvider:
             normalized_base_url = f"{normalized_base_url}/auth/v1"
 
         self.base_url = normalized_base_url
-        self.anon_key = anon_key.strip()
+        self.api_key = api_key.strip()
         self.timeout_seconds = timeout_seconds
 
-    def sign_up(self, *, email: str, password: str) -> ProviderSession:
+    def sign_up(self, *, email: str, password: str) -> ProviderRegistration:
         payload = self._request_json("POST", "/signup", json={"email": email, "password": password})
-        return self._parse_session(payload)
+        return self._parse_registration(payload)
 
     def sign_in_with_password(self, *, email: str, password: str) -> ProviderSession:
         payload = self._request_json(
@@ -82,8 +89,11 @@ class SupabaseAuthProvider:
         params: dict[str, Any] | None = None,
         access_token: str | None = None,
     ) -> dict[str, Any]:
-        if not self.anon_key:
-            raise AuthProviderError(status_code=503, detail="SUPABASE_ANON_KEY is not configured.")
+        if not self.api_key:
+            raise AuthProviderError(
+                status_code=503,
+                detail="SUPABASE_PUBLISHABLE_KEY or SUPABASE_ANON_KEY is not configured.",
+            )
 
         try:
             with httpx.Client(timeout=self.timeout_seconds) as client:
@@ -112,25 +122,51 @@ class SupabaseAuthProvider:
 
     def _build_headers(self, *, access_token: str | None = None) -> dict[str, str]:
         headers = {
-            "apikey": self.anon_key,
+            "apikey": self.api_key,
             "Content-Type": "application/json",
         }
         if access_token is not None:
             headers["Authorization"] = f"Bearer {access_token}"
         return headers
 
+    def _parse_registration(self, payload: dict[str, Any]) -> ProviderRegistration:
+        if self._payload_contains_session(payload):
+            session = self._parse_session(payload)
+            return ProviderRegistration(
+                user=session.user,
+                session=session,
+                email_verification_required=False,
+            )
+
+        user_payload = self._extract_user_payload(payload, raw_session_payload=None)
+        return ProviderRegistration(
+            user=self._parse_user(user_payload),
+            session=None,
+            email_verification_required=True,
+        )
+
+    def _payload_contains_session(self, payload: dict[str, Any]) -> bool:
+        raw_session_payload = payload.get("session")
+        if isinstance(raw_session_payload, dict):
+            return True
+
+        return (
+            isinstance(payload.get("access_token"), str)
+            and isinstance(payload.get("refresh_token"), str)
+            and isinstance(payload.get("token_type"), str)
+            and isinstance(payload.get("expires_in"), int)
+        )
+
     def _parse_session(self, payload: dict[str, Any]) -> ProviderSession:
         raw_session_payload = payload.get("session")
         session_payload = raw_session_payload if isinstance(raw_session_payload, dict) else payload
-        session_user = session_payload.get("user") or payload.get("user")
+        session_user = self._extract_user_payload(payload, raw_session_payload=session_payload)
 
         access_token = session_payload.get("access_token")
         refresh_token = session_payload.get("refresh_token")
         token_type = session_payload.get("token_type")
         expires_in = session_payload.get("expires_in")
 
-        if not isinstance(session_user, dict):
-            raise AuthProviderError(status_code=502, detail="Auth provider did not return a user.")
         if not isinstance(access_token, str) or not isinstance(refresh_token, str):
             raise AuthProviderError(
                 status_code=502,
@@ -153,6 +189,25 @@ class SupabaseAuthProvider:
             expires_in=expires_in,
             expires_at=expires_at,
         )
+
+    def _extract_user_payload(
+        self,
+        payload: dict[str, Any],
+        raw_session_payload: Any,
+    ) -> dict[str, Any]:
+        if isinstance(raw_session_payload, dict):
+            session_user = raw_session_payload.get("user")
+            if isinstance(session_user, dict):
+                return session_user
+
+        payload_user = payload.get("user")
+        if isinstance(payload_user, dict):
+            return payload_user
+
+        if isinstance(payload.get("id"), str) and isinstance(payload.get("email"), str):
+            return payload
+
+        raise AuthProviderError(status_code=502, detail="Auth provider did not return a user.")
 
     def _parse_user(self, payload: dict[str, Any]) -> ProviderUser:
         subject = payload.get("id")

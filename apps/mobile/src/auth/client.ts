@@ -1,13 +1,13 @@
 import { apiRequest } from "../lib/api";
-import type { AuthMeResponse, AuthSessionResponse } from "./types";
+import type { AuthMeResponse, AuthRegistrationResponse, AuthSessionResponse } from "./types";
 
 type Credentials = {
   email: string;
   password: string;
 };
 
-export function register(credentials: Credentials): Promise<AuthSessionResponse> {
-  return apiRequest<AuthSessionResponse>("/auth/register", {
+export function register(credentials: Credentials): Promise<AuthRegistrationResponse> {
+  return apiRequest<AuthRegistrationResponse>("/auth/register", {
     method: "POST",
     body: credentials
   });
