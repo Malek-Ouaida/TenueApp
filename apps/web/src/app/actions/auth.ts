@@ -2,30 +2,27 @@
 
 import { redirect } from "next/navigation";
 
+import type { AuthFormState } from "../(auth)/form-state";
 import { apiRequest, ApiError } from "../../lib/api";
 import { clearAuthCookies, writeAuthCookies } from "../../lib/auth/cookies";
-import { logoutCurrentSession, type AuthSessionResponse } from "../../lib/auth/session";
-
-export type AuthFormState = {
-  error: string | null;
-};
-
-export const initialAuthFormState: AuthFormState = {
-  error: null
-};
+import {
+  logoutCurrentSession,
+  type AuthRegistrationResponse,
+  type AuthSessionResponse
+} from "../../lib/auth/session";
 
 export async function loginAction(
   _: AuthFormState,
   formData: FormData
 ): Promise<AuthFormState> {
-  return submitCredentials("/auth/login", formData);
+  return submitLoginCredentials(formData);
 }
 
 export async function registerAction(
   _: AuthFormState,
   formData: FormData
 ): Promise<AuthFormState> {
-  return submitCredentials("/auth/register", formData);
+  return submitRegistration(formData);
 }
 
 export async function logoutAction() {
@@ -34,15 +31,12 @@ export async function logoutAction() {
   redirect("/login");
 }
 
-async function submitCredentials(
-  endpoint: "/auth/login" | "/auth/register",
-  formData: FormData
-): Promise<AuthFormState> {
+async function submitLoginCredentials(formData: FormData): Promise<AuthFormState> {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
 
   try {
-    const response = await apiRequest<AuthSessionResponse>(endpoint, {
+    const response = await apiRequest<AuthSessionResponse>("/auth/login", {
       method: "POST",
       json: {
         email,
@@ -56,9 +50,43 @@ async function submitCredentials(
     });
   } catch (error) {
     return {
-      error: error instanceof ApiError ? error.message : "Authentication failed."
+      error: error instanceof ApiError ? error.message : "Authentication failed.",
+      notice: null
     };
   }
 
-  redirect("/");
+  redirect("/profile");
+}
+
+async function submitRegistration(formData: FormData): Promise<AuthFormState> {
+  const email = String(formData.get("email") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
+
+  try {
+    const response = await apiRequest<AuthRegistrationResponse>("/auth/register", {
+      method: "POST",
+      json: {
+        email,
+        password
+      }
+    });
+
+    if (response.session) {
+      await writeAuthCookies({
+        accessToken: response.session.access_token,
+        refreshToken: response.session.refresh_token
+      });
+      redirect("/profile");
+    }
+
+    return {
+      error: null,
+      notice: "Check your email to verify your account, then sign in."
+    };
+  } catch (error) {
+    return {
+      error: error instanceof ApiError ? error.message : "Authentication failed.",
+      notice: null
+    };
+  }
 }

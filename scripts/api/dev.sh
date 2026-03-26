@@ -17,6 +17,8 @@ fi
 
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$PWD/.uv-cache}"
 export WATCHFILES_FORCE_POLLING="${WATCHFILES_FORCE_POLLING:-true}"
+export API_HOST="${API_HOST:-0.0.0.0}"
+export API_PORT="${API_PORT:-8000}"
 
 cd apps/api
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app --reload-dir tests
+uv run uvicorn app.main:app --host "$API_HOST" --port "$API_PORT" --reload --reload-dir app --reload-dir tests

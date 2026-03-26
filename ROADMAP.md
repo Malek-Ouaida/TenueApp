@@ -114,6 +114,20 @@ Every personal closet, lookbook, recommendation, and try-on flow depends on user
 
 ---
 
+## Inserted foundation slice -- User profile foundation
+
+This repo also supports a narrow profile-identity slice immediately after auth foundation when the product needs a real personal shell on mobile and web.
+
+**Outcome:**
+- username, display name, bio, and avatar reference exist on the app-owned user record
+- `/profiles/me`, `PATCH /profiles/me`, and authenticated username lookups exist
+- mobile and web can render a real `/profile` shell with a strong header and prepared placeholder sections
+
+**Why now when needed:**
+This gives the product a durable personal identity surface without introducing social features, lookbook implementation, or stats aggregation early.
+
+---
+
 ## Phase 4 -- Closet schema foundation
 Build the core closet data model and lifecycle foundation.
 

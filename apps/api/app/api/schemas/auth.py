@@ -48,6 +48,12 @@ class AuthSessionResponse(BaseModel):
     session: AuthSession
 
 
+class AuthRegistrationResponse(BaseModel):
+    user: AuthUser
+    session: AuthSession | None
+    email_verification_required: bool
+
+
 class AuthMeResponse(BaseModel):
     user: AuthUser
 

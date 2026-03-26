@@ -17,7 +17,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 def get_auth_provider() -> SupabaseAuthProvider:
     return SupabaseAuthProvider(
         base_url=settings.supabase_url,
-        anon_key=settings.supabase_anon_key,
+        api_key=settings.supabase_client_key,
         timeout_seconds=settings.supabase_auth_timeout_seconds,
     )
 

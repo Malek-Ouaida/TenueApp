@@ -11,7 +11,12 @@ from sqlalchemy.pool import StaticPool
 from app.api.dependencies.auth import get_auth_provider
 from app.db.base import Base
 from app.db.session import get_db_session
-from app.domains.auth.provider import AuthProviderError, ProviderSession, ProviderUser
+from app.domains.auth.provider import (
+    AuthProviderError,
+    ProviderRegistration,
+    ProviderSession,
+    ProviderUser,
+)
 from app.main import app
 
 engine = create_engine(
@@ -32,8 +37,9 @@ class FakeAuthProvider:
         self.users_by_email: dict[str, dict[str, str]] = {}
         self.access_tokens: dict[str, str] = {}
         self.refresh_tokens: dict[str, str] = {}
+        self.require_email_verification_on_signup = False
 
-    def sign_up(self, *, email: str, password: str) -> ProviderSession:
+    def sign_up(self, *, email: str, password: str) -> ProviderRegistration:
         normalized_email = email.strip().lower()
         if normalized_email in self.users_by_email:
             raise AuthProviderError(400, "User already registered.")
@@ -45,7 +51,18 @@ class FakeAuthProvider:
             "password": password,
         }
 
-        return self._issue_session(subject=subject, email=normalized_email)
+        if self.require_email_verification_on_signup:
+            return ProviderRegistration(
+                user=ProviderUser(subject=subject, email=normalized_email),
+                session=None,
+                email_verification_required=True,
+            )
+
+        return ProviderRegistration(
+            user=ProviderUser(subject=subject, email=normalized_email),
+            session=self._issue_session(subject=subject, email=normalized_email),
+            email_verification_required=False,
+        )
 
     def sign_in_with_password(self, *, email: str, password: str) -> ProviderSession:
         normalized_email = email.strip().lower()

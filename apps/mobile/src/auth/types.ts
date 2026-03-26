@@ -20,6 +20,12 @@ export type AuthSessionResponse = {
   session: AuthSession;
 };
 
+export type AuthRegistrationResponse = {
+  user: AuthUser;
+  session: AuthSession | null;
+  email_verification_required: boolean;
+};
+
 export type AuthMeResponse = {
   user: AuthUser;
 };
@@ -29,6 +35,12 @@ export type AuthStatus = "loading" | "anonymous" | "authenticated";
 export type AuthResult =
   | {
       ok: true;
+      nextStep: "authenticated";
+    }
+  | {
+      ok: true;
+      nextStep: "verify_email";
+      message: string;
     }
   | {
       ok: false;

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useActionState } from "react";
 
-import { initialAuthFormState, loginAction } from "../../actions/auth";
+import { loginAction } from "../../actions/auth";
+import { initialAuthFormState } from "../form-state";
 
 export default function LoginPage() {
   const [state, formAction, isPending] = useActionState(loginAction, initialAuthFormState);
@@ -30,6 +31,7 @@ export default function LoginPage() {
           <input className="auth-input" id="password" name="password" type="password" required />
 
           {state.error ? <p className="auth-error">{state.error}</p> : null}
+          {state.notice ? <p className="auth-notice">{state.notice}</p> : null}
 
           <button className="auth-button" type="submit" disabled={isPending}>
             {isPending ? "Signing in…" : "Sign in"}

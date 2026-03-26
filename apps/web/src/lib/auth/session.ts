@@ -25,6 +25,12 @@ export type AuthSessionResponse = {
   session: AuthSession;
 };
 
+export type AuthRegistrationResponse = {
+  user: AuthUser;
+  session: AuthSession | null;
+  email_verification_required: boolean;
+};
+
 type MeResponse = {
   user: AuthUser;
 };

@@ -11,9 +11,28 @@ def test_register_returns_user_and_session(client: TestClient) -> None:
     body = response.json()
     assert body["user"]["email"] == "person@example.com"
     assert body["user"]["auth_provider"] == "supabase"
+    assert body["email_verification_required"] is False
     assert body["session"]["token_type"] == "bearer"
     assert body["session"]["access_token"]
     assert body["session"]["refresh_token"]
+
+
+def test_register_can_require_email_verification(
+    client: TestClient,
+    fake_auth_provider,
+) -> None:
+    fake_auth_provider.require_email_verification_on_signup = True
+
+    response = client.post(
+        "/auth/register",
+        json={"email": "person@example.com", "password": "password123"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["user"]["email"] == "person@example.com"
+    assert body["email_verification_required"] is True
+    assert body["session"] is None
 
 
 def test_me_requires_authentication(client: TestClient) -> None:
