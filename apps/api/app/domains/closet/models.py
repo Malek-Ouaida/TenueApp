@@ -139,6 +139,13 @@ class ClosetJobStatus(str, Enum):
     FAILED = "failed"
 
 
+class UploadIntentStatus(str, Enum):
+    PENDING = "pending"
+    FINALIZED = "finalized"
+    EXPIRED = "expired"
+    FAILED = "failed"
+
+
 class ClosetItem(Base):
     __tablename__ = "closet_items"
     __table_args__ = (
@@ -448,6 +455,80 @@ class ClosetJob(Base):
     payload: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+
+class ClosetUploadIntent(Base):
+    __tablename__ = "closet_upload_intents"
+    __table_args__ = (
+        Index("ix_closet_upload_intents_user_status_created", "user_id", "status", "created_at"),
+        Index(
+            "ix_closet_upload_intents_item_status_expires",
+            "closet_item_id",
+            "status",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    closet_item_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("closet_items.id", ondelete="CASCADE"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+    )
+    filename: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(255))
+    file_size: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    staging_bucket: Mapped[str] = mapped_column(String(128))
+    staging_key: Mapped[str] = mapped_column(String(512))
+    status: Mapped[UploadIntentStatus] = mapped_column(
+        string_enum(UploadIntentStatus),
+        default=UploadIntentStatus.PENDING,
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+
+class ClosetIdempotencyKey(Base):
+    __tablename__ = "closet_idempotency_keys"
+    __table_args__ = (
+        Index(
+            "ux_closet_idempotency_keys_user_operation_key",
+            "user_id",
+            "operation",
+            "idempotency_key",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+    )
+    operation: Mapped[str] = mapped_column(String(64))
+    idempotency_key: Mapped[str] = mapped_column(String(255))
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    resource_type: Mapped[str] = mapped_column(String(64))
+    resource_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True))
+    response_status_code: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

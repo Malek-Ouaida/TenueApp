@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.domains.closet.errors import (
@@ -16,6 +16,7 @@ from app.domains.closet.errors import (
 from app.domains.closet.models import (
     ApplicabilityState,
     AuditActorType,
+    ClosetIdempotencyKey,
     ClosetItem,
     ClosetItemAuditEvent,
     ClosetItemFieldState,
@@ -24,11 +25,16 @@ from app.domains.closet.models import (
     ClosetItemMetadataProjection,
     ClosetJob,
     ClosetJobStatus,
+    ClosetUploadIntent,
     FieldReviewState,
     FieldSource,
+    LifecycleStatus,
     MediaAsset,
     MediaAssetSourceKind,
+    ProcessingRun,
     ProcessingRunType,
+    ProcessingStatus,
+    UploadIntentStatus,
     utcnow,
 )
 
@@ -59,6 +65,7 @@ class ClosetRepository:
     def create_media_asset(
         self,
         *,
+        asset_id: UUID | None = None,
         user_id: UUID,
         bucket: str,
         key: str,
@@ -71,6 +78,7 @@ class ClosetRepository:
         is_private: bool,
     ) -> MediaAsset:
         asset = MediaAsset(
+            id=asset_id or None,
             user_id=user_id,
             bucket=bucket,
             key=key,
@@ -85,6 +93,165 @@ class ClosetRepository:
         self.session.add(asset)
         self.session.flush()
         return asset
+
+    def create_processing_run(
+        self,
+        *,
+        closet_item_id: UUID,
+        run_type: ProcessingRunType,
+        status: ProcessingStatus,
+        retry_count: int = 0,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+        failure_code: str | None = None,
+        failure_payload: Any | None = None,
+    ) -> ProcessingRun:
+        run = ProcessingRun(
+            closet_item_id=closet_item_id,
+            run_type=run_type,
+            status=status,
+            retry_count=retry_count,
+            started_at=started_at,
+            completed_at=completed_at,
+            failure_code=failure_code,
+            failure_payload=failure_payload,
+        )
+        self.session.add(run)
+        self.session.flush()
+        return run
+
+    def create_upload_intent(
+        self,
+        *,
+        upload_intent_id: UUID | None = None,
+        closet_item_id: UUID,
+        user_id: UUID,
+        filename: str,
+        mime_type: str,
+        file_size: int,
+        sha256: str,
+        staging_bucket: str,
+        staging_key: str,
+        expires_at: datetime,
+    ) -> ClosetUploadIntent:
+        upload_intent = ClosetUploadIntent(
+            id=upload_intent_id or None,
+            closet_item_id=closet_item_id,
+            user_id=user_id,
+            filename=filename,
+            mime_type=mime_type,
+            file_size=file_size,
+            sha256=sha256,
+            staging_bucket=staging_bucket,
+            staging_key=staging_key,
+            status=UploadIntentStatus.PENDING,
+            expires_at=expires_at,
+        )
+        self.session.add(upload_intent)
+        self.session.flush()
+        return upload_intent
+
+    def get_upload_intent_for_user(
+        self,
+        *,
+        upload_intent_id: UUID,
+        user_id: UUID,
+    ) -> ClosetUploadIntent | None:
+        statement = select(ClosetUploadIntent).where(
+            ClosetUploadIntent.id == upload_intent_id,
+            ClosetUploadIntent.user_id == user_id,
+        )
+        return self.session.execute(statement).scalar_one_or_none()
+
+    def get_pending_upload_intent_for_item(
+        self,
+        *,
+        closet_item_id: UUID,
+    ) -> ClosetUploadIntent | None:
+        statement = (
+            select(ClosetUploadIntent)
+            .where(
+                ClosetUploadIntent.closet_item_id == closet_item_id,
+                ClosetUploadIntent.status == UploadIntentStatus.PENDING,
+            )
+            .order_by(ClosetUploadIntent.created_at.desc(), ClosetUploadIntent.id.desc())
+        )
+        return self.session.execute(statement).scalars().first()
+
+    def mark_upload_intent_expired(
+        self,
+        *,
+        upload_intent: ClosetUploadIntent,
+    ) -> ClosetUploadIntent:
+        upload_intent.status = UploadIntentStatus.EXPIRED
+        upload_intent.last_error_code = None
+        upload_intent.last_error_detail = None
+        self.session.flush()
+        return upload_intent
+
+    def mark_upload_intent_failed(
+        self,
+        *,
+        upload_intent: ClosetUploadIntent,
+        error_code: str,
+        error_detail: str,
+    ) -> ClosetUploadIntent:
+        upload_intent.status = UploadIntentStatus.FAILED
+        upload_intent.last_error_code = error_code
+        upload_intent.last_error_detail = error_detail
+        self.session.flush()
+        return upload_intent
+
+    def mark_upload_intent_finalized(
+        self,
+        *,
+        upload_intent: ClosetUploadIntent,
+        finalized_at: datetime,
+    ) -> ClosetUploadIntent:
+        upload_intent.status = UploadIntentStatus.FINALIZED
+        upload_intent.finalized_at = finalized_at
+        upload_intent.last_error_code = None
+        upload_intent.last_error_detail = None
+        self.session.flush()
+        return upload_intent
+
+    def get_idempotency_record(
+        self,
+        *,
+        user_id: UUID,
+        operation: str,
+        idempotency_key: str,
+    ) -> ClosetIdempotencyKey | None:
+        statement = select(ClosetIdempotencyKey).where(
+            ClosetIdempotencyKey.user_id == user_id,
+            ClosetIdempotencyKey.operation == operation,
+            ClosetIdempotencyKey.idempotency_key == idempotency_key,
+        )
+        return self.session.execute(statement).scalar_one_or_none()
+
+    def create_idempotency_record(
+        self,
+        *,
+        user_id: UUID,
+        operation: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        resource_type: str,
+        resource_id: UUID,
+        response_status_code: int,
+    ) -> ClosetIdempotencyKey:
+        record = ClosetIdempotencyKey(
+            user_id=user_id,
+            operation=operation,
+            idempotency_key=idempotency_key,
+            request_fingerprint=request_fingerprint,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            response_status_code=response_status_code,
+        )
+        self.session.add(record)
+        self.session.flush()
+        return record
 
     def get_media_asset_for_user(self, *, asset_id: UUID, user_id: UUID) -> MediaAsset | None:
         statement = select(MediaAsset).where(
@@ -251,6 +418,52 @@ class ClosetRepository:
             ClosetItemMetadataProjection.closet_item_id == item_id
         )
         return self.session.execute(statement).scalar_one_or_none()
+
+    def list_review_items(
+        self,
+        *,
+        user_id: UUID,
+        cursor_updated_at: datetime | None,
+        cursor_item_id: UUID | None,
+        limit: int,
+    ) -> list[ClosetItem]:
+        normalized_cursor_updated_at = self._normalize_cursor_datetime(cursor_updated_at)
+        statement = select(ClosetItem).where(
+            ClosetItem.user_id == user_id,
+            ClosetItem.lifecycle_status.notin_(
+                [LifecycleStatus.CONFIRMED, LifecycleStatus.ARCHIVED]
+            ),
+        )
+
+        if normalized_cursor_updated_at is not None and cursor_item_id is not None:
+            statement = statement.where(
+                or_(
+                    ClosetItem.updated_at < normalized_cursor_updated_at,
+                    and_(
+                        ClosetItem.updated_at == normalized_cursor_updated_at,
+                        ClosetItem.id < cursor_item_id,
+                    ),
+                )
+            )
+
+        statement = statement.order_by(ClosetItem.updated_at.desc(), ClosetItem.id.desc()).limit(
+            limit
+        )
+        return list(self.session.execute(statement).scalars())
+
+    def _normalize_cursor_datetime(self, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+
+        dialect_name = self.session.bind.dialect.name if self.session.bind is not None else ""
+        if dialect_name == "sqlite":
+            if value.tzinfo is None:
+                return value
+            return value.astimezone(UTC).replace(tzinfo=None)
+
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
 
 
 class ClosetJobRepository:

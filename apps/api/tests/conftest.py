@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.dependencies.auth import get_auth_provider
+from app.api.dependencies.closet import get_storage_client
+from app.core.storage import InMemoryStorageClient
 from app.db.base import Base
 from app.db.session import get_db_session
 from app.domains.auth.provider import (
@@ -138,6 +140,11 @@ def fake_auth_provider() -> FakeAuthProvider:
 
 
 @pytest.fixture()
+def fake_storage_client() -> InMemoryStorageClient:
+    return InMemoryStorageClient()
+
+
+@pytest.fixture()
 def db_session() -> Generator[Session, None, None]:
     session = TestingSessionLocal()
     try:
@@ -147,7 +154,31 @@ def db_session() -> Generator[Session, None, None]:
 
 
 @pytest.fixture()
-def client(fake_auth_provider: FakeAuthProvider) -> Generator[TestClient, None, None]:
+def client(
+    fake_auth_provider: FakeAuthProvider,
+    fake_storage_client: InMemoryStorageClient,
+) -> Generator[TestClient, None, None]:
+    def override_get_db_session() -> Generator[Session, None, None]:
+        session = TestingSessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = override_get_db_session
+    app.dependency_overrides[get_auth_provider] = lambda: fake_auth_provider
+    app.dependency_overrides[get_storage_client] = lambda: fake_storage_client
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def client_without_storage_override(
+    fake_auth_provider: FakeAuthProvider,
+) -> Generator[TestClient, None, None]:
     def override_get_db_session() -> Generator[Session, None, None]:
         session = TestingSessionLocal()
         try:
