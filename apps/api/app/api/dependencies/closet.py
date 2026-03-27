@@ -12,6 +12,11 @@ from app.domains.closet.background_removal import (
     build_background_removal_provider,
 )
 from app.domains.closet.image_processing_service import ClosetImageProcessingService
+from app.domains.closet.metadata_extraction import (
+    MetadataExtractionProvider,
+    build_metadata_extraction_provider,
+)
+from app.domains.closet.metadata_extraction_service import ClosetMetadataExtractionService
 from app.domains.closet.repository import ClosetJobRepository, ClosetRepository
 from app.domains.closet.service import ClosetLifecycleService
 from app.domains.closet.upload_service import ClosetDraftUploadService
@@ -32,11 +37,35 @@ def get_background_removal_provider() -> BackgroundRemovalProvider:
     return build_background_removal_provider()
 
 
+@lru_cache(maxsize=1)
+def get_metadata_extraction_provider() -> MetadataExtractionProvider:
+    return build_metadata_extraction_provider()
+
+
+def get_closet_metadata_extraction_service(
+    db_session: Annotated[Session, Depends(get_db_session)],
+    storage_client: Annotated[ObjectStorageClient, Depends(get_storage_client)],
+    metadata_extraction_provider: Annotated[
+        MetadataExtractionProvider, Depends(get_metadata_extraction_provider)
+    ],
+) -> ClosetMetadataExtractionService:
+    return ClosetMetadataExtractionService(
+        session=db_session,
+        repository=ClosetRepository(db_session),
+        job_repository=ClosetJobRepository(db_session),
+        storage=storage_client,
+        metadata_provider=metadata_extraction_provider,
+    )
+
+
 def get_closet_image_processing_service(
     db_session: Annotated[Session, Depends(get_db_session)],
     storage_client: Annotated[ObjectStorageClient, Depends(get_storage_client)],
     background_removal_provider: Annotated[
         BackgroundRemovalProvider, Depends(get_background_removal_provider)
+    ],
+    metadata_extraction_service: Annotated[
+        ClosetMetadataExtractionService, Depends(get_closet_metadata_extraction_service)
     ],
 ) -> ClosetImageProcessingService:
     repository = ClosetRepository(db_session)
@@ -48,6 +77,7 @@ def get_closet_image_processing_service(
         lifecycle_service=lifecycle_service,
         storage=storage_client,
         background_removal_provider=background_removal_provider,
+        metadata_extraction_service=metadata_extraction_service,
     )
 
 

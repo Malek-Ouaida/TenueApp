@@ -20,6 +20,9 @@ UPLOAD_TOO_LARGE = "upload_too_large"
 UPLOAD_DIMENSIONS_EXCEEDED = "upload_dimensions_exceeded"
 IDEMPOTENCY_CONFLICT = "idempotency_conflict"
 PROCESSING_ALREADY_SCHEDULED = "processing_already_scheduled"
+METADATA_EXTRACTION_ALREADY_SCHEDULED = "metadata_extraction_already_scheduled"
+METADATA_EXTRACTION_NOT_READY = "metadata_extraction_not_ready"
+METADATA_EXTRACTION_SOURCE_MISSING = "metadata_extraction_source_missing"
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,21 @@ ERROR_DEFINITIONS = {
         code=PROCESSING_ALREADY_SCHEDULED,
         status_code=409,
         detail="Image processing is already scheduled for this closet item.",
+    ),
+    METADATA_EXTRACTION_ALREADY_SCHEDULED: ClosetErrorDefinition(
+        code=METADATA_EXTRACTION_ALREADY_SCHEDULED,
+        status_code=409,
+        detail="Metadata extraction is already scheduled for this closet item.",
+    ),
+    METADATA_EXTRACTION_NOT_READY: ClosetErrorDefinition(
+        code=METADATA_EXTRACTION_NOT_READY,
+        status_code=409,
+        detail="This closet item is not ready for metadata extraction yet.",
+    ),
+    METADATA_EXTRACTION_SOURCE_MISSING: ClosetErrorDefinition(
+        code=METADATA_EXTRACTION_SOURCE_MISSING,
+        status_code=422,
+        detail="No usable image source is available for metadata extraction.",
     ),
 }
 

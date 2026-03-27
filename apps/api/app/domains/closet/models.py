@@ -239,6 +239,14 @@ class ClosetItemImage(Base):
 
 class ProcessingRun(Base):
     __tablename__ = "processing_runs"
+    __table_args__ = (
+        Index(
+            "ix_processing_runs_item_run_type_created",
+            "closet_item_id",
+            "run_type",
+            "created_at",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     closet_item_id: Mapped[UUID] = mapped_column(
@@ -262,6 +270,10 @@ class ProcessingRun(Base):
 
 class ProviderResult(Base):
     __tablename__ = "provider_results"
+    __table_args__ = (
+        Index("ix_provider_results_run_created", "processing_run_id", "created_at"),
+        Index("ix_provider_results_item_task_created", "closet_item_id", "task_type", "created_at"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     closet_item_id: Mapped[UUID] = mapped_column(
@@ -284,6 +296,9 @@ class ProviderResult(Base):
 
 class ClosetItemFieldCandidate(Base):
     __tablename__ = "closet_item_field_candidates"
+    __table_args__ = (
+        Index("ix_field_candidates_provider_result_created", "provider_result_id", "created_at"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     closet_item_id: Mapped[UUID] = mapped_column(
@@ -435,7 +450,10 @@ class ClosetItemSimilarityEdge(Base):
 
 class ClosetJob(Base):
     __tablename__ = "closet_jobs"
-    __table_args__ = (Index("ix_closet_jobs_status_available_at", "status", "available_at"),)
+    __table_args__ = (
+        Index("ix_closet_jobs_status_available_at", "status", "available_at"),
+        Index("ix_closet_jobs_item_kind_status", "closet_item_id", "job_kind", "status"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     closet_item_id: Mapped[UUID] = mapped_column(

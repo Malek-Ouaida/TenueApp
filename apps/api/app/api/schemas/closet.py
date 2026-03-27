@@ -151,3 +151,34 @@ class ClosetProcessingSnapshot(BaseModel):
     display_image: ClosetProcessingImageSnapshot | None
     original_image: ClosetProcessingImageSnapshot | None
     thumbnail_image: ClosetProcessingImageSnapshot | None
+
+
+class ClosetFieldCandidateSnapshot(BaseModel):
+    id: UUID
+    field_name: str
+    raw_value: Any
+    normalized_candidate: Any
+    confidence: float | None
+    applicability_state: str
+    conflict_notes: str | None
+    provider_result_id: UUID | None
+    created_at: datetime
+
+
+class ClosetExtractionCurrentCandidateSet(BaseModel):
+    provider_result_id: UUID
+    status: str
+    created_at: datetime
+    field_candidates: list[ClosetFieldCandidateSnapshot]
+
+
+class ClosetExtractionSnapshot(BaseModel):
+    item_id: UUID
+    lifecycle_status: str
+    review_status: str
+    extraction_status: str
+    can_reextract: bool
+    source_image: ClosetProcessingImageSnapshot | None
+    latest_run: ClosetProcessingRunSnapshot | None
+    provider_results: list[ClosetProviderResultSnapshot]
+    current_candidate_set: ClosetExtractionCurrentCandidateSet | None
