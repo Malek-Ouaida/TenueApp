@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -105,3 +106,48 @@ class ClosetUploadCompleteRequest(BaseModel):
 class ClosetReviewListResponse(BaseModel):
     items: list[ClosetDraftSnapshot]
     next_cursor: str | None
+
+
+class ClosetProcessingImageSnapshot(BaseModel):
+    asset_id: UUID
+    role: str
+    mime_type: str
+    width: int | None
+    height: int | None
+    url: str
+    expires_at: datetime
+
+
+class ClosetProcessingRunSnapshot(BaseModel):
+    id: UUID
+    run_type: str
+    status: str
+    retry_count: int
+    started_at: datetime | None
+    completed_at: datetime | None
+    failure_code: str | None
+
+
+class ClosetProviderResultSnapshot(BaseModel):
+    id: UUID
+    provider_name: str
+    provider_model: str | None
+    provider_version: str | None
+    task_type: str
+    status: str
+    raw_payload: Any
+    created_at: datetime
+
+
+class ClosetProcessingSnapshot(BaseModel):
+    item_id: UUID
+    lifecycle_status: str
+    processing_status: str
+    review_status: str
+    failure_summary: str | None
+    can_reprocess: bool
+    latest_run: ClosetProcessingRunSnapshot | None
+    provider_results: list[ClosetProviderResultSnapshot]
+    display_image: ClosetProcessingImageSnapshot | None
+    original_image: ClosetProcessingImageSnapshot | None
+    thumbnail_image: ClosetProcessingImageSnapshot | None

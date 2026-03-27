@@ -18,4 +18,22 @@ fi
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$PWD/.uv-cache}"
 
 cd apps/api
+resolve_db_field() {
+  PYTHONPATH=. uv run python -m app.core.db_target --field "$1"
+}
+
+DB_TARGET="$(resolve_db_field target)"
+DB_SOURCE="$(resolve_db_field source)"
+DB_HOST="$(resolve_db_field host)"
+DB_URL="$(resolve_db_field database_url)"
+
+echo "Resolved API database target: $DB_TARGET (source: $DB_SOURCE, host: $DB_HOST)"
+
+if [ "$DB_TARGET" = "remote" ] && [ "${TENUE_ALLOW_REMOTE_MIGRATIONS:-}" != "1" ]; then
+  echo "Remote migrations are blocked by default."
+  echo "Set TENUE_ALLOW_REMOTE_MIGRATIONS=1 for this command if you really intend to migrate a remote database."
+  exit 1
+fi
+
+export DATABASE_URL="$DB_URL"
 PYTHONPATH=. uv run alembic upgrade head

@@ -35,6 +35,7 @@ from app.domains.closet.errors import (
     UPLOAD_VALIDATION_FAILED,
     build_error,
 )
+from app.domains.closet.image_processing_service import ClosetImageProcessingService
 from app.domains.closet.models import (
     AuditActorType,
     ClosetItem,
@@ -82,10 +83,12 @@ class ClosetDraftUploadService:
         session: Session,
         repository: ClosetRepository,
         storage: ObjectStorageClient,
+        image_processing_service: ClosetImageProcessingService,
     ) -> None:
         self.session = session
         self.repository = repository
         self.storage = storage
+        self.image_processing_service = image_processing_service
 
     def create_draft(
         self,
@@ -317,6 +320,12 @@ class ClosetDraftUploadService:
                 status=ProcessingStatus.COMPLETED,
                 started_at=now,
                 completed_at=now,
+            )
+            self.image_processing_service.enqueue_processing_for_item(
+                item=item,
+                actor_type=AuditActorType.USER,
+                actor_user_id=user_id,
+                raise_on_duplicate=False,
             )
             self.repository.create_idempotency_record(
                 user_id=user_id,

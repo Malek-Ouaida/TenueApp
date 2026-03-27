@@ -1,27 +1,26 @@
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
-from dotenv import load_dotenv
+from app.core.db_target import load_project_env, resolve_database_target
 
-API_ROOT = Path(__file__).resolve().parents[2]
-REPO_ROOT = Path(__file__).resolve().parents[4]
-LOCAL_SUPABASE_DATABASE_URL = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
 CLOSET_UPLOAD_ALLOWED_MIME_TYPES = ("image/jpeg", "image/png", "image/webp")
 CLOSET_UPLOAD_MAX_FILE_SIZE = 15 * 1024 * 1024
 CLOSET_UPLOAD_MAX_WIDTH = 8000
 CLOSET_UPLOAD_MAX_HEIGHT = 8000
 CLOSET_UPLOAD_INTENT_TTL_SECONDS = 15 * 60
+DEFAULT_PHOTOROOM_BASE_URL = "https://sdk.photoroom.com/v1/segment"
 
-load_dotenv(REPO_ROOT / ".env")
-load_dotenv(API_ROOT / ".env", override=True)
+load_project_env()
 
 
 @dataclass(frozen=True)
 class Settings:
     app_name: str
     environment: str
+    database_target: str
     database_url: str
+    database_source: str
+    database_host: str | None
     supabase_url: str
     supabase_client_key: str
     supabase_auth_timeout_seconds: float
@@ -31,6 +30,12 @@ class Settings:
     minio_secret_key: str
     minio_bucket: str
     minio_region: str
+    closet_media_download_ttl_seconds: int
+    closet_thumbnail_max_edge: int
+    closet_background_removal_provider: str
+    photoroom_api_key: str
+    photoroom_base_url: str
+    photoroom_timeout_seconds: float
 
 
 def load_supabase_client_key() -> str:
@@ -42,10 +47,14 @@ def load_supabase_client_key() -> str:
 
 
 def load_settings() -> Settings:
+    database_target = resolve_database_target()
     return Settings(
         app_name=os.getenv("APP_NAME", "Tenue API"),
         environment=os.getenv("APP_ENV", os.getenv("TENUE_ENV", "development")),
-        database_url=os.getenv("DATABASE_URL", LOCAL_SUPABASE_DATABASE_URL),
+        database_target=database_target.target,
+        database_url=database_target.database_url,
+        database_source=database_target.source,
+        database_host=database_target.host,
         supabase_url=os.getenv("SUPABASE_URL", "http://127.0.0.1:54321"),
         supabase_client_key=load_supabase_client_key(),
         supabase_auth_timeout_seconds=float(os.getenv("SUPABASE_AUTH_TIMEOUT_SECONDS", "10")),
@@ -55,6 +64,19 @@ def load_settings() -> Settings:
         minio_secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
         minio_bucket=os.getenv("MINIO_BUCKET", "tenue-dev"),
         minio_region=os.getenv("MINIO_REGION", "us-east-1"),
+        closet_media_download_ttl_seconds=int(
+            os.getenv("CLOSET_MEDIA_DOWNLOAD_TTL_SECONDS", "300")
+        ),
+        closet_thumbnail_max_edge=int(os.getenv("CLOSET_THUMBNAIL_MAX_EDGE", "512")),
+        closet_background_removal_provider=os.getenv(
+            "CLOSET_BACKGROUND_REMOVAL_PROVIDER",
+            "disabled",
+        ).strip()
+        or "disabled",
+        photoroom_api_key=os.getenv("PHOTOROOM_API_KEY", "").strip(),
+        photoroom_base_url=os.getenv("PHOTOROOM_BASE_URL", DEFAULT_PHOTOROOM_BASE_URL).strip()
+        or DEFAULT_PHOTOROOM_BASE_URL,
+        photoroom_timeout_seconds=float(os.getenv("PHOTOROOM_TIMEOUT_SECONDS", "30")),
     )
 
 

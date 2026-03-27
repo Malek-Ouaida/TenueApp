@@ -18,10 +18,12 @@ from app.domains.closet.models import (
     ClosetItem,
     ClosetItemAuditEvent,
     ClosetItemImage,
+    ClosetJob,
     ClosetUploadIntent,
     LifecycleStatus,
     MediaAsset,
     ProcessingRun,
+    ProcessingRunType,
 )
 
 
@@ -319,6 +321,8 @@ def test_finalize_upload_success(
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == draft["id"]
+    assert body["lifecycle_status"] == "processing"
+    assert body["processing_status"] == "pending"
     assert body["has_primary_image"] is True
     assert body["failure_summary"] is None
 
@@ -555,12 +559,21 @@ def test_finalize_upload_persists_asset_and_audit_run(
             select(ProcessingRun).where(ProcessingRun.closet_item_id == draft_id)
         ).scalars()
     )
+    jobs = list(
+        db_session.execute(select(ClosetJob).where(ClosetJob.closet_item_id == draft_id)).scalars()
+    )
 
     assert item.primary_image_id is not None
+    assert item.lifecycle_status.value == "processing"
+    assert item.processing_status.value == "pending"
     assert len(media_assets) == 1
     assert len(item_images) == 1
     assert any(event.event_type == "upload_finalized" for event in audit_events)
+    assert any(event.event_type == "image_processing_enqueued" for event in audit_events)
     assert len(processing_runs) == 1
+    assert processing_runs[0].run_type == ProcessingRunType.UPLOAD_VALIDATION
+    assert len(jobs) == 1
+    assert jobs[0].job_kind == ProcessingRunType.IMAGE_PROCESSING
 
 
 def test_review_queue_excludes_confirmed_and_archived_items(

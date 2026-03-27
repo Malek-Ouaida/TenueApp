@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.domains.closet.errors import (
@@ -34,6 +34,8 @@ from app.domains.closet.models import (
     ProcessingRun,
     ProcessingRunType,
     ProcessingStatus,
+    ProviderResult,
+    ProviderResultStatus,
     UploadIntentStatus,
     utcnow,
 )
@@ -48,6 +50,10 @@ class ClosetRepository:
         self.session.add(item)
         self.session.flush()
         return item
+
+    def get_item(self, *, item_id: UUID) -> ClosetItem | None:
+        statement = select(ClosetItem).where(ClosetItem.id == item_id)
+        return self.session.execute(statement).scalar_one_or_none()
 
     def get_item_for_user(self, *, item_id: UUID, user_id: UUID) -> ClosetItem | None:
         statement = select(ClosetItem).where(
@@ -119,6 +125,72 @@ class ClosetRepository:
         self.session.add(run)
         self.session.flush()
         return run
+
+    def count_processing_runs(
+        self,
+        *,
+        closet_item_id: UUID,
+        run_type: ProcessingRunType,
+    ) -> int:
+        statement = select(func.count(ProcessingRun.id)).where(
+            ProcessingRun.closet_item_id == closet_item_id,
+            ProcessingRun.run_type == run_type,
+        )
+        return int(self.session.execute(statement).scalar_one())
+
+    def get_latest_processing_run(
+        self,
+        *,
+        closet_item_id: UUID,
+        run_type: ProcessingRunType,
+    ) -> ProcessingRun | None:
+        statement = (
+            select(ProcessingRun)
+            .where(
+                ProcessingRun.closet_item_id == closet_item_id,
+                ProcessingRun.run_type == run_type,
+            )
+            .order_by(ProcessingRun.created_at.desc(), ProcessingRun.id.desc())
+        )
+        return self.session.execute(statement).scalars().first()
+
+    def create_provider_result(
+        self,
+        *,
+        closet_item_id: UUID,
+        processing_run_id: UUID | None,
+        provider_name: str,
+        provider_model: str | None,
+        provider_version: str | None,
+        task_type: str,
+        status: ProviderResultStatus,
+        raw_payload: Any,
+    ) -> ProviderResult:
+        provider_result = ProviderResult(
+            closet_item_id=closet_item_id,
+            processing_run_id=processing_run_id,
+            provider_name=provider_name,
+            provider_model=provider_model,
+            provider_version=provider_version,
+            task_type=task_type,
+            status=status,
+            raw_payload=raw_payload,
+        )
+        self.session.add(provider_result)
+        self.session.flush()
+        return provider_result
+
+    def list_provider_results_for_run(
+        self,
+        *,
+        processing_run_id: UUID,
+    ) -> list[ProviderResult]:
+        statement = (
+            select(ProviderResult)
+            .where(ProviderResult.processing_run_id == processing_run_id)
+            .order_by(ProviderResult.created_at.asc(), ProviderResult.id.asc())
+        )
+        return list(self.session.execute(statement).scalars())
 
     def create_upload_intent(
         self,
@@ -301,6 +373,64 @@ class ClosetRepository:
         )
         return self.session.execute(statement).scalar_one_or_none() is not None
 
+    def get_primary_image_asset(
+        self,
+        *,
+        item: ClosetItem,
+    ) -> tuple[ClosetItemImage, MediaAsset] | None:
+        if item.primary_image_id is None:
+            return None
+
+        statement = (
+            select(ClosetItemImage, MediaAsset)
+            .join(MediaAsset, MediaAsset.id == ClosetItemImage.asset_id)
+            .where(
+                ClosetItemImage.id == item.primary_image_id,
+                ClosetItemImage.closet_item_id == item.id,
+                ClosetItemImage.is_active.is_(True),
+            )
+        )
+        row = self.session.execute(statement).first()
+        if row is None:
+            return None
+        return row[0], row[1]
+
+    def get_active_image_asset_by_role(
+        self,
+        *,
+        closet_item_id: UUID,
+        role: ClosetItemImageRole,
+    ) -> tuple[ClosetItemImage, MediaAsset] | None:
+        statement = (
+            select(ClosetItemImage, MediaAsset)
+            .join(MediaAsset, MediaAsset.id == ClosetItemImage.asset_id)
+            .where(
+                ClosetItemImage.closet_item_id == closet_item_id,
+                ClosetItemImage.role == role,
+                ClosetItemImage.is_active.is_(True),
+            )
+            .order_by(ClosetItemImage.created_at.desc(), ClosetItemImage.id.desc())
+        )
+        row = self.session.execute(statement).first()
+        if row is None:
+            return None
+        return row[0], row[1]
+
+    def deactivate_active_image_roles(
+        self,
+        *,
+        closet_item_id: UUID,
+        roles: list[ClosetItemImageRole],
+    ) -> None:
+        statement = select(ClosetItemImage).where(
+            ClosetItemImage.closet_item_id == closet_item_id,
+            ClosetItemImage.role.in_(roles),
+            ClosetItemImage.is_active.is_(True),
+        )
+        for item_image in self.session.execute(statement).scalars():
+            item_image.is_active = False
+        self.session.flush()
+
     def list_field_states(self, *, closet_item_id: UUID) -> list[ClosetItemFieldState]:
         statement = select(ClosetItemFieldState).where(
             ClosetItemFieldState.closet_item_id == closet_item_id
@@ -470,6 +600,19 @@ class ClosetJobRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def has_pending_or_running_job(
+        self,
+        *,
+        closet_item_id: UUID,
+        job_kind: ProcessingRunType,
+    ) -> bool:
+        statement = select(ClosetJob.id).where(
+            ClosetJob.closet_item_id == closet_item_id,
+            ClosetJob.job_kind == job_kind,
+            ClosetJob.status.in_([ClosetJobStatus.PENDING, ClosetJobStatus.RUNNING]),
+        )
+        return self.session.execute(statement).first() is not None
+
     def enqueue_job(
         self,
         *,
@@ -483,7 +626,7 @@ class ClosetJobRepository:
             closet_item_id=closet_item_id,
             job_kind=job_kind,
             status=ClosetJobStatus.PENDING,
-            available_at=available_at or utcnow(),
+            available_at=self._normalize_datetime(available_at or utcnow()),
             max_attempts=max_attempts,
             payload=payload,
         )
@@ -497,7 +640,7 @@ class ClosetJobRepository:
         worker_name: str,
         now: datetime | None = None,
     ) -> ClosetJob | None:
-        current_time = now or utcnow()
+        current_time = self._normalize_datetime(now or utcnow())
         statement = (
             select(ClosetJob)
             .where(
@@ -520,8 +663,9 @@ class ClosetJobRepository:
         worker_name: str,
         now: datetime | None = None,
     ) -> ClosetJob:
-        current_time = now or utcnow()
-        if job.status != ClosetJobStatus.PENDING or job.available_at > current_time:
+        current_time = self._normalize_datetime(now or utcnow())
+        available_at = self._normalize_datetime(job.available_at)
+        if job.status != ClosetJobStatus.PENDING or available_at > current_time:
             raise build_error(JOB_NOT_CLAIMABLE)
 
         job.status = ClosetJobStatus.RUNNING
@@ -565,13 +709,24 @@ class ClosetJobRepository:
             raise build_error(JOB_RETRY_EXHAUSTED)
 
         job.status = ClosetJobStatus.PENDING
-        job.available_at = available_at or utcnow()
+        job.available_at = self._normalize_datetime(available_at or utcnow())
         job.locked_at = None
         job.locked_by = None
         job.last_error_code = error_code
         job.last_error_detail = error_detail
         self.session.flush()
         return job
+
+    def _normalize_datetime(self, value: datetime) -> datetime:
+        dialect_name = self.session.bind.dialect.name if self.session.bind is not None else ""
+        if dialect_name == "sqlite":
+            if value.tzinfo is None:
+                return value
+            return value.astimezone(UTC).replace(tzinfo=None)
+
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 def is_confirmed_field_state(field_state: ClosetItemFieldState | None) -> bool:
