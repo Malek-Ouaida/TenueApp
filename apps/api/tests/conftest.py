@@ -138,6 +138,15 @@ def fake_auth_provider() -> FakeAuthProvider:
 
 
 @pytest.fixture()
+def db_session() -> Generator[Session, None, None]:
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture()
 def client(fake_auth_provider: FakeAuthProvider) -> Generator[TestClient, None, None]:
     def override_get_db_session() -> Generator[Session, None, None]:
         session = TestingSessionLocal()
