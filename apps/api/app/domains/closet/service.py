@@ -129,6 +129,11 @@ class ClosetLifecycleService:
         user_id: UUID,
         processing_status: ProcessingStatus,
         failure_summary: str | None = None,
+        event_type: str = "processing_status_updated",
+        actor_type: AuditActorType = AuditActorType.SYSTEM,
+        actor_user_id: UUID | None = None,
+        payload: dict[str, Any] | None = None,
+        commit: bool = True,
     ) -> ClosetItem:
         item = self.repository.require_item_for_user(item_id=item_id, user_id=user_id)
         self._ensure_not_archived(item)
@@ -149,8 +154,15 @@ class ClosetLifecycleService:
             item.lifecycle_status = LifecycleStatus.REVIEW
             self._recompute_review_readiness(item)
         elif processing_status == ProcessingStatus.PENDING:
-            if item.lifecycle_status not in {LifecycleStatus.DRAFT, LifecycleStatus.PROCESSING}:
+            if not self.repository.has_active_primary_image(item=item):
+                raise build_error(MISSING_PRIMARY_IMAGE)
+            if item.lifecycle_status not in {
+                LifecycleStatus.DRAFT,
+                LifecycleStatus.PROCESSING,
+                LifecycleStatus.REVIEW,
+            }:
                 raise build_error(INVALID_LIFECYCLE_TRANSITION)
+            item.lifecycle_status = LifecycleStatus.PROCESSING
         else:
             raise build_error(INVALID_LIFECYCLE_TRANSITION)
 
@@ -158,18 +170,26 @@ class ClosetLifecycleService:
         item.failure_summary = failure_summary
         self.repository.create_audit_event(
             closet_item_id=item.id,
-            actor_type=AuditActorType.SYSTEM,
-            actor_user_id=None,
-            event_type="processing_status_updated",
+            actor_type=actor_type,
+            actor_user_id=actor_user_id,
+            event_type=event_type,
             payload={
+                "processing_status": processing_status.value,
+                "lifecycle_status": item.lifecycle_status.value,
+                "failure_summary": failure_summary,
+                **(payload or {}),
+            }
+            if payload is not None
+            else {
                 "processing_status": processing_status.value,
                 "lifecycle_status": item.lifecycle_status.value,
                 "failure_summary": failure_summary,
             },
         )
         self.repository.upsert_metadata_projection(item=item, taxonomy_version=TAXONOMY_VERSION)
-        self.session.commit()
-        self.session.refresh(item)
+        if commit:
+            self.session.commit()
+            self.session.refresh(item)
         return item
 
     def upsert_field_state(

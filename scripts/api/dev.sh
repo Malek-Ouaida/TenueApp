@@ -21,4 +21,16 @@ export API_HOST="${API_HOST:-0.0.0.0}"
 export API_PORT="${API_PORT:-8000}"
 
 cd apps/api
+resolve_db_field() {
+  PYTHONPATH=. uv run python -m app.core.db_target --field "$1"
+}
+
+DB_TARGET="$(resolve_db_field target)"
+DB_SOURCE="$(resolve_db_field source)"
+DB_HOST="$(resolve_db_field host)"
+DB_URL="$(resolve_db_field database_url)"
+
+echo "Resolved API database target: $DB_TARGET (source: $DB_SOURCE, host: $DB_HOST)"
+
+export DATABASE_URL="$DB_URL"
 uv run uvicorn app.main:app --host "$API_HOST" --port "$API_PORT" --reload --reload-dir app --reload-dir tests

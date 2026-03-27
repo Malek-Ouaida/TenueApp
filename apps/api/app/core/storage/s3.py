@@ -19,6 +19,12 @@ class PresignedUpload:
 
 
 @dataclass(frozen=True)
+class PresignedDownload:
+    url: str
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
 class StorageObject:
     bucket: str
     key: str
@@ -36,9 +42,26 @@ class ObjectStorageClient(Protocol):
         expires_in_seconds: int,
     ) -> PresignedUpload: ...
 
+    def generate_presigned_download(
+        self,
+        *,
+        bucket: str,
+        key: str,
+        expires_in_seconds: int,
+    ) -> PresignedDownload: ...
+
     def head_object(self, *, bucket: str, key: str) -> StorageObject | None: ...
 
     def get_object_bytes(self, *, bucket: str, key: str) -> bytes: ...
+
+    def put_object_bytes(
+        self,
+        *,
+        bucket: str,
+        key: str,
+        content: bytes,
+        content_type: str,
+    ) -> None: ...
 
     def copy_object(
         self,
@@ -92,6 +115,24 @@ class S3StorageClient:
             expires_at=datetime.now(UTC) + timedelta(seconds=expires_in_seconds),
         )
 
+    def generate_presigned_download(
+        self,
+        *,
+        bucket: str,
+        key: str,
+        expires_in_seconds: int,
+    ) -> PresignedDownload:
+        url = self._client.generate_presigned_url(
+            ClientMethod="get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expires_in_seconds,
+            HttpMethod="GET",
+        )
+        return PresignedDownload(
+            url=url,
+            expires_at=datetime.now(UTC) + timedelta(seconds=expires_in_seconds),
+        )
+
     def head_object(self, *, bucket: str, key: str) -> StorageObject | None:
         try:
             result = self._client.head_object(Bucket=bucket, Key=key)
@@ -117,6 +158,21 @@ class S3StorageClient:
 
         body = result["Body"]
         return bytes(body.read())
+
+    def put_object_bytes(
+        self,
+        *,
+        bucket: str,
+        key: str,
+        content: bytes,
+        content_type: str,
+    ) -> None:
+        self._client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=content,
+            ContentType=content_type,
+        )
 
     def copy_object(
         self,
@@ -176,6 +232,20 @@ class InMemoryStorageClient:
             expires_at=expires_at,
         )
 
+    def generate_presigned_download(
+        self,
+        *,
+        bucket: str,
+        key: str,
+        expires_in_seconds: int,
+    ) -> PresignedDownload:
+        encoded_key = quote(key, safe="")
+        expires_at = datetime.now(UTC) + timedelta(seconds=expires_in_seconds)
+        return PresignedDownload(
+            url=f"https://fake-storage.local/download/{bucket}/{encoded_key}",
+            expires_at=expires_at,
+        )
+
     def put_via_presigned_upload(
         self,
         *,
@@ -207,6 +277,16 @@ class InMemoryStorageClient:
         if payload is None:
             raise FileNotFoundError(f"Object {bucket}/{key} was not found.")
         return payload[0]
+
+    def put_object_bytes(
+        self,
+        *,
+        bucket: str,
+        key: str,
+        content: bytes,
+        content_type: str,
+    ) -> None:
+        self._objects[(bucket, key)] = (content, content_type)
 
     def copy_object(
         self,

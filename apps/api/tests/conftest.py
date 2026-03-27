@@ -1,5 +1,6 @@
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.dependencies.auth import get_auth_provider
-from app.api.dependencies.closet import get_storage_client
+from app.api.dependencies.closet import get_background_removal_provider, get_storage_client
 from app.core.storage import InMemoryStorageClient
 from app.db.base import Base
 from app.db.session import get_db_session
@@ -19,6 +20,8 @@ from app.domains.auth.provider import (
     ProviderSession,
     ProviderUser,
 )
+from app.domains.closet.background_removal import BackgroundRemovalResult
+from app.domains.closet.models import ProviderResultStatus
 from app.main import app
 
 engine = create_engine(
@@ -126,6 +129,67 @@ class FakeAuthProvider:
         raise AuthProviderError(404, "User not found.")
 
 
+class FakeBackgroundRemovalProvider:
+    provider_name = "fake_background_removal"
+
+    def __init__(self) -> None:
+        self.status = ProviderResultStatus.FAILED
+        self.result_image_bytes: bytes | None = None
+        self.result_mime_type: str | None = None
+        self.payload: dict[str, Any] = {
+            "reason_code": "provider_disabled",
+            "message": "Background removal is disabled in tests.",
+        }
+        self.raise_error: Exception | None = None
+
+    def succeed(
+        self,
+        *,
+        image_bytes: bytes,
+        mime_type: str = "image/png",
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self.status = ProviderResultStatus.SUCCEEDED
+        self.result_image_bytes = image_bytes
+        self.result_mime_type = mime_type
+        self.payload = payload or {"message": "Processed by fake provider."}
+        self.raise_error = None
+
+    def fail(self, *, payload: dict[str, Any] | None = None) -> None:
+        self.status = ProviderResultStatus.FAILED
+        self.result_image_bytes = None
+        self.result_mime_type = None
+        self.payload = payload or {
+            "reason_code": "provider_failed",
+            "message": "Fake provider fallback.",
+        }
+        self.raise_error = None
+
+    def crash(self, exc: Exception) -> None:
+        self.raise_error = exc
+
+    def remove_background(
+        self,
+        *,
+        image_bytes: bytes,
+        filename: str,
+        mime_type: str,
+    ) -> BackgroundRemovalResult:
+        del image_bytes, filename, mime_type
+        if self.raise_error is not None:
+            raise self.raise_error
+
+        return BackgroundRemovalResult(
+            provider_name=self.provider_name,
+            provider_model=None,
+            provider_version="test",
+            status=self.status,
+            sanitized_payload=self.payload,
+            image_bytes=self.result_image_bytes,
+            mime_type=self.result_mime_type,
+        )
+
+
 @pytest.fixture(autouse=True)
 def reset_database() -> Generator[None, None, None]:
     Base.metadata.drop_all(bind=engine)
@@ -145,6 +209,13 @@ def fake_storage_client() -> InMemoryStorageClient:
 
 
 @pytest.fixture()
+def fake_background_removal_provider() -> FakeBackgroundRemovalProvider:
+    provider = FakeBackgroundRemovalProvider()
+    provider.fail()
+    return provider
+
+
+@pytest.fixture()
 def db_session() -> Generator[Session, None, None]:
     session = TestingSessionLocal()
     try:
@@ -157,6 +228,7 @@ def db_session() -> Generator[Session, None, None]:
 def client(
     fake_auth_provider: FakeAuthProvider,
     fake_storage_client: InMemoryStorageClient,
+    fake_background_removal_provider: FakeBackgroundRemovalProvider,
 ) -> Generator[TestClient, None, None]:
     def override_get_db_session() -> Generator[Session, None, None]:
         session = TestingSessionLocal()
@@ -168,6 +240,9 @@ def client(
     app.dependency_overrides[get_db_session] = override_get_db_session
     app.dependency_overrides[get_auth_provider] = lambda: fake_auth_provider
     app.dependency_overrides[get_storage_client] = lambda: fake_storage_client
+    app.dependency_overrides[get_background_removal_provider] = (
+        lambda: fake_background_removal_provider
+    )
 
     with TestClient(app) as test_client:
         yield test_client
@@ -178,6 +253,7 @@ def client(
 @pytest.fixture()
 def client_without_storage_override(
     fake_auth_provider: FakeAuthProvider,
+    fake_background_removal_provider: FakeBackgroundRemovalProvider,
 ) -> Generator[TestClient, None, None]:
     def override_get_db_session() -> Generator[Session, None, None]:
         session = TestingSessionLocal()
@@ -188,6 +264,9 @@ def client_without_storage_override(
 
     app.dependency_overrides[get_db_session] = override_get_db_session
     app.dependency_overrides[get_auth_provider] = lambda: fake_auth_provider
+    app.dependency_overrides[get_background_removal_provider] = (
+        lambda: fake_background_removal_provider
+    )
 
     with TestClient(app) as test_client:
         yield test_client

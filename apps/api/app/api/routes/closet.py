@@ -4,11 +4,18 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
 from app.api.dependencies.auth import CurrentUser
-from app.api.dependencies.closet import get_closet_upload_service
+from app.api.dependencies.closet import (
+    get_closet_image_processing_service,
+    get_closet_upload_service,
+)
 from app.api.schemas.closet import (
     ClosetDraftCreateRequest,
     ClosetDraftSnapshot,
     ClosetMetadataOptionsResponse,
+    ClosetProcessingImageSnapshot,
+    ClosetProcessingRunSnapshot,
+    ClosetProcessingSnapshot,
+    ClosetProviderResultSnapshot,
     ClosetReviewListResponse,
     ClosetUploadCompleteRequest,
     ClosetUploadIntentRequest,
@@ -16,6 +23,10 @@ from app.api.schemas.closet import (
     PresignedUploadDescriptor,
 )
 from app.domains.closet.errors import ClosetDomainError
+from app.domains.closet.image_processing_service import (
+    ClosetImageProcessingService,
+    ProcessingSnapshot,
+)
 from app.domains.closet.taxonomy import build_metadata_options
 from app.domains.closet.upload_service import ClosetDraftUploadService, InvalidReviewCursorError
 
@@ -138,6 +149,48 @@ def read_review_queue(
     )
 
 
+@router.get("/items/{item_id}/processing", response_model=ClosetProcessingSnapshot)
+def read_processing_status(
+    item_id: UUID,
+    current_user: CurrentUser,
+    processing_service: Annotated[
+        ClosetImageProcessingService, Depends(get_closet_image_processing_service)
+    ],
+) -> ClosetProcessingSnapshot:
+    try:
+        snapshot = processing_service.get_processing_snapshot(
+            item_id=item_id,
+            user_id=current_user.id,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_processing_snapshot(snapshot)
+
+
+@router.post("/items/{item_id}/reprocess", response_model=ClosetProcessingSnapshot, status_code=202)
+def reprocess_item_image(
+    item_id: UUID,
+    response: Response,
+    current_user: CurrentUser,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    processing_service: Annotated[
+        ClosetImageProcessingService, Depends(get_closet_image_processing_service)
+    ],
+) -> ClosetProcessingSnapshot:
+    try:
+        snapshot, status_code = processing_service.reprocess_item(
+            item_id=item_id,
+            user_id=current_user.id,
+            idempotency_key=idempotency_key,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    response.status_code = status_code
+    return build_processing_snapshot(snapshot)
+
+
 def build_draft_snapshot(item: object) -> ClosetDraftSnapshot:
     item_id = getattr(item, "id")
     title = getattr(item, "title")
@@ -161,5 +214,60 @@ def build_draft_snapshot(item: object) -> ClosetDraftSnapshot:
     )
 
 
+def build_processing_snapshot(snapshot: ProcessingSnapshot) -> ClosetProcessingSnapshot:
+    def image_payload(image: object | None) -> ClosetProcessingImageSnapshot | None:
+        if image is None:
+            return None
+        return ClosetProcessingImageSnapshot(
+            asset_id=getattr(image, "asset_id"),
+            role=getattr(image, "role"),
+            mime_type=getattr(image, "mime_type"),
+            width=getattr(image, "width"),
+            height=getattr(image, "height"),
+            url=getattr(image, "url"),
+            expires_at=getattr(image, "expires_at"),
+        )
+
+    latest_run = getattr(snapshot, "latest_run")
+    return ClosetProcessingSnapshot(
+        item_id=getattr(snapshot, "item_id"),
+        lifecycle_status=getattr(snapshot, "lifecycle_status"),
+        processing_status=getattr(snapshot, "processing_status"),
+        review_status=getattr(snapshot, "review_status"),
+        failure_summary=getattr(snapshot, "failure_summary"),
+        can_reprocess=getattr(snapshot, "can_reprocess"),
+        latest_run=None
+        if latest_run is None
+        else ClosetProcessingRunSnapshot(
+            id=getattr(latest_run, "id"),
+            run_type=getattr(latest_run, "run_type"),
+            status=getattr(latest_run, "status"),
+            retry_count=getattr(latest_run, "retry_count"),
+            started_at=getattr(latest_run, "started_at"),
+            completed_at=getattr(latest_run, "completed_at"),
+            failure_code=getattr(latest_run, "failure_code"),
+        ),
+        provider_results=[
+            ClosetProviderResultSnapshot(
+                id=getattr(provider_result, "id"),
+                provider_name=getattr(provider_result, "provider_name"),
+                provider_model=getattr(provider_result, "provider_model"),
+                provider_version=getattr(provider_result, "provider_version"),
+                task_type=getattr(provider_result, "task_type"),
+                status=getattr(provider_result, "status"),
+                raw_payload=getattr(provider_result, "raw_payload"),
+                created_at=getattr(provider_result, "created_at"),
+            )
+            for provider_result in getattr(snapshot, "provider_results")
+        ],
+        display_image=image_payload(getattr(snapshot, "display_image")),
+        original_image=image_payload(getattr(snapshot, "original_image")),
+        thumbnail_image=image_payload(getattr(snapshot, "thumbnail_image")),
+    )
+
+
 def _http_error(exc: ClosetDomainError) -> HTTPException:
-    return HTTPException(status_code=exc.status_code, detail=exc.detail)
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.detail},
+    )

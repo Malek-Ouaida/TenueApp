@@ -1,6 +1,7 @@
 from .s3 import (
     InMemoryStorageClient,
     ObjectStorageClient,
+    PresignedDownload,
     PresignedUpload,
     S3StorageClient,
     StorageObject,
@@ -9,6 +10,7 @@ from .s3 import (
 __all__ = [
     "InMemoryStorageClient",
     "ObjectStorageClient",
+    "PresignedDownload",
     "PresignedUpload",
     "StorageObject",
     "S3StorageClient",

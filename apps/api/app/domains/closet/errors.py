@@ -19,6 +19,7 @@ UNSUPPORTED_UPLOAD_MIME_TYPE = "unsupported_upload_mime_type"
 UPLOAD_TOO_LARGE = "upload_too_large"
 UPLOAD_DIMENSIONS_EXCEEDED = "upload_dimensions_exceeded"
 IDEMPOTENCY_CONFLICT = "idempotency_conflict"
+PROCESSING_ALREADY_SCHEDULED = "processing_already_scheduled"
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,11 @@ ERROR_DEFINITIONS = {
         code=IDEMPOTENCY_CONFLICT,
         status_code=409,
         detail="The idempotency key was reused with a different request payload.",
+    ),
+    PROCESSING_ALREADY_SCHEDULED: ClosetErrorDefinition(
+        code=PROCESSING_ALREADY_SCHEDULED,
+        status_code=409,
+        detail="Image processing is already scheduled for this closet item.",
     ),
 }
 
