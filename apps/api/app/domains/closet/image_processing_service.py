@@ -26,6 +26,7 @@ from app.domains.closet.errors import (
     PROCESSING_ALREADY_SCHEDULED,
     build_error,
 )
+from app.domains.closet.metadata_extraction_service import ClosetMetadataExtractionService
 from app.domains.closet.models import (
     AuditActorType,
     ClosetItem,
@@ -112,6 +113,7 @@ class ClosetImageProcessingService:
         lifecycle_service: ClosetLifecycleService,
         storage: ObjectStorageClient,
         background_removal_provider: BackgroundRemovalProvider,
+        metadata_extraction_service: ClosetMetadataExtractionService,
     ) -> None:
         self.session = session
         self.repository = repository
@@ -119,6 +121,7 @@ class ClosetImageProcessingService:
         self.lifecycle_service = lifecycle_service
         self.storage = storage
         self.background_removal_provider = background_removal_provider
+        self.metadata_extraction_service = metadata_extraction_service
 
     def enqueue_processing_for_item(
         self,
@@ -418,6 +421,15 @@ class ClosetImageProcessingService:
             payload={"processing_run_id": str(run.id)},
             commit=False,
         )
+        try:
+            self.metadata_extraction_service.enqueue_extraction_for_item(
+                item=item,
+                actor_type=AuditActorType.WORKER,
+                actor_user_id=None,
+                raise_on_duplicate=False,
+            )
+        except Exception:
+            pass
 
     def _can_reprocess(self, *, item: ClosetItem) -> bool:
         if item.lifecycle_status in {LifecycleStatus.CONFIRMED, LifecycleStatus.ARCHIVED}:

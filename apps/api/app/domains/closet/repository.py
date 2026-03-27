@@ -19,6 +19,7 @@ from app.domains.closet.models import (
     ClosetIdempotencyKey,
     ClosetItem,
     ClosetItemAuditEvent,
+    ClosetItemFieldCandidate,
     ClosetItemFieldState,
     ClosetItemImage,
     ClosetItemImageRole,
@@ -189,6 +190,82 @@ class ClosetRepository:
             select(ProviderResult)
             .where(ProviderResult.processing_run_id == processing_run_id)
             .order_by(ProviderResult.created_at.asc(), ProviderResult.id.asc())
+        )
+        return list(self.session.execute(statement).scalars())
+
+    def list_provider_results_for_item_task(
+        self,
+        *,
+        closet_item_id: UUID,
+        task_type: str,
+    ) -> list[ProviderResult]:
+        statement = (
+            select(ProviderResult)
+            .where(
+                ProviderResult.closet_item_id == closet_item_id,
+                ProviderResult.task_type == task_type,
+            )
+            .order_by(ProviderResult.created_at.desc(), ProviderResult.id.desc())
+        )
+        return list(self.session.execute(statement).scalars())
+
+    def get_latest_usable_provider_result_for_item_task(
+        self,
+        *,
+        closet_item_id: UUID,
+        task_type: str,
+    ) -> ProviderResult | None:
+        statement = (
+            select(ProviderResult)
+            .where(
+                ProviderResult.closet_item_id == closet_item_id,
+                ProviderResult.task_type == task_type,
+                ProviderResult.status.in_(
+                    [ProviderResultStatus.SUCCEEDED, ProviderResultStatus.PARTIAL]
+                ),
+            )
+            .order_by(ProviderResult.created_at.desc(), ProviderResult.id.desc())
+        )
+        return self.session.execute(statement).scalars().first()
+
+    def create_field_candidate(
+        self,
+        *,
+        closet_item_id: UUID,
+        field_name: str,
+        raw_value: Any | None,
+        normalized_candidate: Any | None,
+        confidence: float | None,
+        provider_result_id: UUID | None,
+        applicability_state: ApplicabilityState,
+        conflict_notes: str | None,
+    ) -> ClosetItemFieldCandidate:
+        candidate = ClosetItemFieldCandidate(
+            closet_item_id=closet_item_id,
+            field_name=field_name,
+            raw_value=raw_value,
+            normalized_candidate=normalized_candidate,
+            confidence=confidence,
+            provider_result_id=provider_result_id,
+            applicability_state=applicability_state,
+            conflict_notes=conflict_notes,
+        )
+        self.session.add(candidate)
+        self.session.flush()
+        return candidate
+
+    def list_field_candidates_for_provider_result(
+        self,
+        *,
+        provider_result_id: UUID,
+    ) -> list[ClosetItemFieldCandidate]:
+        statement = (
+            select(ClosetItemFieldCandidate)
+            .where(ClosetItemFieldCandidate.provider_result_id == provider_result_id)
+            .order_by(
+                ClosetItemFieldCandidate.created_at.asc(),
+                ClosetItemFieldCandidate.id.asc(),
+            )
         )
         return list(self.session.execute(statement).scalars())
 
@@ -612,6 +689,39 @@ class ClosetJobRepository:
             ClosetJob.status.in_([ClosetJobStatus.PENDING, ClosetJobStatus.RUNNING]),
         )
         return self.session.execute(statement).first() is not None
+
+    def get_pending_or_running_job(
+        self,
+        *,
+        closet_item_id: UUID,
+        job_kind: ProcessingRunType,
+    ) -> ClosetJob | None:
+        statement = (
+            select(ClosetJob)
+            .where(
+                ClosetJob.closet_item_id == closet_item_id,
+                ClosetJob.job_kind == job_kind,
+                ClosetJob.status.in_([ClosetJobStatus.PENDING, ClosetJobStatus.RUNNING]),
+            )
+            .order_by(ClosetJob.created_at.desc(), ClosetJob.id.desc())
+        )
+        return self.session.execute(statement).scalars().first()
+
+    def get_latest_job(
+        self,
+        *,
+        closet_item_id: UUID,
+        job_kind: ProcessingRunType,
+    ) -> ClosetJob | None:
+        statement = (
+            select(ClosetJob)
+            .where(
+                ClosetJob.closet_item_id == closet_item_id,
+                ClosetJob.job_kind == job_kind,
+            )
+            .order_by(ClosetJob.created_at.desc(), ClosetJob.id.desc())
+        )
+        return self.session.execute(statement).scalars().first()
 
     def enqueue_job(
         self,

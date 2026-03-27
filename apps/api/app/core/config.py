@@ -9,6 +9,7 @@ CLOSET_UPLOAD_MAX_WIDTH = 8000
 CLOSET_UPLOAD_MAX_HEIGHT = 8000
 CLOSET_UPLOAD_INTENT_TTL_SECONDS = 15 * 60
 DEFAULT_PHOTOROOM_BASE_URL = "https://sdk.photoroom.com/v1/segment"
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 load_project_env()
 
@@ -36,6 +37,12 @@ class Settings:
     photoroom_api_key: str
     photoroom_base_url: str
     photoroom_timeout_seconds: float
+    closet_metadata_extraction_provider: str
+    gemini_api_key: str
+    gemini_base_url: str
+    gemini_model: str
+    gemini_timeout_seconds: float
+    closet_metadata_extraction_max_edge: int
 
 
 def load_supabase_client_key() -> str:
@@ -77,6 +84,20 @@ def load_settings() -> Settings:
         photoroom_base_url=os.getenv("PHOTOROOM_BASE_URL", DEFAULT_PHOTOROOM_BASE_URL).strip()
         or DEFAULT_PHOTOROOM_BASE_URL,
         photoroom_timeout_seconds=float(os.getenv("PHOTOROOM_TIMEOUT_SECONDS", "30")),
+        closet_metadata_extraction_provider=os.getenv(
+            "CLOSET_METADATA_EXTRACTION_PROVIDER",
+            "disabled",
+        ).strip()
+        or "disabled",
+        gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
+        gemini_base_url=os.getenv("GEMINI_BASE_URL", DEFAULT_GEMINI_BASE_URL).strip()
+        or DEFAULT_GEMINI_BASE_URL,
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
+        or "gemini-2.5-flash-lite",
+        gemini_timeout_seconds=float(os.getenv("GEMINI_TIMEOUT_SECONDS", "30")),
+        closet_metadata_extraction_max_edge=int(
+            os.getenv("CLOSET_METADATA_EXTRACTION_MAX_EDGE", "1600")
+        ),
     )
 
 

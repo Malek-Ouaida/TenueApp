@@ -179,12 +179,14 @@ def run_worker_once(
     db_session: Session,
     fake_storage_client: InMemoryStorageClient,
     fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any | None = None,
 ):
     worker = ClosetWorker(
         session=db_session,
         handlers=build_worker_handlers(
             storage=fake_storage_client,
             background_removal_provider=fake_background_removal_provider,
+            metadata_extraction_provider=fake_metadata_extraction_provider,
         ),
     )
     return worker.run_once(worker_name="test-image-worker")
@@ -544,6 +546,7 @@ def test_reprocess_success_and_idempotent_replay(
     db_session: Session,
     fake_storage_client: InMemoryStorageClient,
     fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
 ) -> None:
     fake_background_removal_provider.fail()
     headers = register_and_get_headers(client, email="reprocess-success@example.com")
@@ -554,7 +557,12 @@ def test_reprocess_success_and_idempotent_replay(
         draft_key="draft-reprocess-success",
         complete_key="complete-reprocess-success",
     )
-    first_job = run_worker_once(db_session, fake_storage_client, fake_background_removal_provider)
+    first_job = run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
     assert first_job is not None
 
     first_response = client.post(
@@ -586,8 +594,23 @@ def test_reprocess_success_and_idempotent_replay(
         ).scalars()
     )
 
-    assert len(jobs) == 2
-    assert len([job for job in jobs if job.status == ClosetJobStatus.PENDING]) == 1
+    assert len(jobs) == 3
+    assert len(
+        [
+            job
+            for job in jobs
+            if job.job_kind == ProcessingRunType.IMAGE_PROCESSING
+            and job.status == ClosetJobStatus.PENDING
+        ]
+    ) == 1
+    assert len(
+        [
+            job
+            for job in jobs
+            if job.job_kind == ProcessingRunType.METADATA_EXTRACTION
+            and job.status == ClosetJobStatus.PENDING
+        ]
+    ) == 1
     assert "image_reprocess_requested" in [event.event_type for event in audit_events]
 
 

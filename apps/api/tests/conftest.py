@@ -10,7 +10,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.dependencies.auth import get_auth_provider
-from app.api.dependencies.closet import get_background_removal_provider, get_storage_client
+from app.api.dependencies.closet import (
+    get_background_removal_provider,
+    get_metadata_extraction_provider,
+    get_storage_client,
+)
 from app.core.storage import InMemoryStorageClient
 from app.db.base import Base
 from app.db.session import get_db_session
@@ -21,6 +25,7 @@ from app.domains.auth.provider import (
     ProviderUser,
 )
 from app.domains.closet.background_removal import BackgroundRemovalResult
+from app.domains.closet.metadata_extraction import MetadataExtractionResult
 from app.domains.closet.models import ProviderResultStatus
 from app.main import app
 
@@ -190,6 +195,80 @@ class FakeBackgroundRemovalProvider:
         )
 
 
+class FakeMetadataExtractionProvider:
+    provider_name = "fake_metadata_extraction"
+
+    def __init__(self) -> None:
+        self.status = ProviderResultStatus.FAILED
+        self.raw_fields: dict[str, Any] | None = None
+        self.payload: dict[str, Any] = {
+            "reason_code": "provider_disabled",
+            "message": "Metadata extraction is disabled in tests.",
+        }
+        self.raise_error: Exception | None = None
+        self.calls: list[dict[str, Any]] = []
+
+    def succeed(
+        self,
+        *,
+        raw_fields: dict[str, Any],
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self.status = ProviderResultStatus.SUCCEEDED
+        self.raw_fields = raw_fields
+        self.payload = payload or {"message": "Extracted by fake provider."}
+        self.raise_error = None
+
+    def partial(
+        self,
+        *,
+        raw_fields: dict[str, Any],
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self.status = ProviderResultStatus.PARTIAL
+        self.raw_fields = raw_fields
+        self.payload = payload or {"message": "Partially extracted by fake provider."}
+        self.raise_error = None
+
+    def fail(self, *, payload: dict[str, Any] | None = None) -> None:
+        self.status = ProviderResultStatus.FAILED
+        self.raw_fields = None
+        self.payload = payload or {
+            "reason_code": "provider_failed",
+            "message": "Fake metadata extraction fallback.",
+        }
+        self.raise_error = None
+
+    def crash(self, exc: Exception) -> None:
+        self.raise_error = exc
+
+    def extract_metadata(
+        self,
+        *,
+        image_bytes: bytes,
+        filename: str,
+        mime_type: str,
+    ) -> MetadataExtractionResult:
+        self.calls.append(
+            {
+                "image_bytes": image_bytes,
+                "filename": filename,
+                "mime_type": mime_type,
+            }
+        )
+        if self.raise_error is not None:
+            raise self.raise_error
+
+        return MetadataExtractionResult(
+            provider_name=self.provider_name,
+            provider_model="fake-model",
+            provider_version="test",
+            status=self.status,
+            sanitized_payload=self.payload,
+            raw_fields=self.raw_fields,
+        )
+
+
 @pytest.fixture(autouse=True)
 def reset_database() -> Generator[None, None, None]:
     Base.metadata.drop_all(bind=engine)
@@ -216,6 +295,13 @@ def fake_background_removal_provider() -> FakeBackgroundRemovalProvider:
 
 
 @pytest.fixture()
+def fake_metadata_extraction_provider() -> FakeMetadataExtractionProvider:
+    provider = FakeMetadataExtractionProvider()
+    provider.fail()
+    return provider
+
+
+@pytest.fixture()
 def db_session() -> Generator[Session, None, None]:
     session = TestingSessionLocal()
     try:
@@ -229,6 +315,7 @@ def client(
     fake_auth_provider: FakeAuthProvider,
     fake_storage_client: InMemoryStorageClient,
     fake_background_removal_provider: FakeBackgroundRemovalProvider,
+    fake_metadata_extraction_provider: FakeMetadataExtractionProvider,
 ) -> Generator[TestClient, None, None]:
     def override_get_db_session() -> Generator[Session, None, None]:
         session = TestingSessionLocal()
@@ -243,6 +330,9 @@ def client(
     app.dependency_overrides[get_background_removal_provider] = (
         lambda: fake_background_removal_provider
     )
+    app.dependency_overrides[get_metadata_extraction_provider] = (
+        lambda: fake_metadata_extraction_provider
+    )
 
     with TestClient(app) as test_client:
         yield test_client
@@ -254,6 +344,7 @@ def client(
 def client_without_storage_override(
     fake_auth_provider: FakeAuthProvider,
     fake_background_removal_provider: FakeBackgroundRemovalProvider,
+    fake_metadata_extraction_provider: FakeMetadataExtractionProvider,
 ) -> Generator[TestClient, None, None]:
     def override_get_db_session() -> Generator[Session, None, None]:
         session = TestingSessionLocal()
@@ -266,6 +357,9 @@ def client_without_storage_override(
     app.dependency_overrides[get_auth_provider] = lambda: fake_auth_provider
     app.dependency_overrides[get_background_removal_provider] = (
         lambda: fake_background_removal_provider
+    )
+    app.dependency_overrides[get_metadata_extraction_provider] = (
+        lambda: fake_metadata_extraction_provider
     )
 
     with TestClient(app) as test_client:
