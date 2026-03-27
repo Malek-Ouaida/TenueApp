@@ -9,6 +9,16 @@ INVALID_FIELD_NAME = "invalid_field_name"
 JOB_NOT_CLAIMABLE = "job_not_claimable"
 JOB_RETRY_EXHAUSTED = "job_retry_exhausted"
 UNSUPPORTED_JOB_HANDLER = "unsupported_job_handler"
+UPLOAD_INTENT_NOT_FOUND = "upload_intent_not_found"
+UPLOAD_INTENT_EXPIRED = "upload_intent_expired"
+UPLOAD_ALREADY_FINALIZED = "upload_already_finalized"
+UPLOAD_NOT_PRESENT = "upload_not_present"
+UPLOAD_CHECKSUM_MISMATCH = "upload_checksum_mismatch"
+UPLOAD_VALIDATION_FAILED = "upload_validation_failed"
+UNSUPPORTED_UPLOAD_MIME_TYPE = "unsupported_upload_mime_type"
+UPLOAD_TOO_LARGE = "upload_too_large"
+UPLOAD_DIMENSIONS_EXCEEDED = "upload_dimensions_exceeded"
+IDEMPOTENCY_CONFLICT = "idempotency_conflict"
 
 
 @dataclass(frozen=True)
@@ -63,6 +73,56 @@ ERROR_DEFINITIONS = {
         code=UNSUPPORTED_JOB_HANDLER,
         status_code=501,
         detail="No worker handler is defined for this closet job kind.",
+    ),
+    UPLOAD_INTENT_NOT_FOUND: ClosetErrorDefinition(
+        code=UPLOAD_INTENT_NOT_FOUND,
+        status_code=404,
+        detail="Upload intent not found.",
+    ),
+    UPLOAD_INTENT_EXPIRED: ClosetErrorDefinition(
+        code=UPLOAD_INTENT_EXPIRED,
+        status_code=409,
+        detail="The upload intent has expired.",
+    ),
+    UPLOAD_ALREADY_FINALIZED: ClosetErrorDefinition(
+        code=UPLOAD_ALREADY_FINALIZED,
+        status_code=409,
+        detail="The upload intent has already been finalized.",
+    ),
+    UPLOAD_NOT_PRESENT: ClosetErrorDefinition(
+        code=UPLOAD_NOT_PRESENT,
+        status_code=409,
+        detail="The uploaded object is not present in storage.",
+    ),
+    UPLOAD_CHECKSUM_MISMATCH: ClosetErrorDefinition(
+        code=UPLOAD_CHECKSUM_MISMATCH,
+        status_code=409,
+        detail="The uploaded checksum did not match the declared checksum.",
+    ),
+    UPLOAD_VALIDATION_FAILED: ClosetErrorDefinition(
+        code=UPLOAD_VALIDATION_FAILED,
+        status_code=422,
+        detail="The uploaded object failed validation.",
+    ),
+    UNSUPPORTED_UPLOAD_MIME_TYPE: ClosetErrorDefinition(
+        code=UNSUPPORTED_UPLOAD_MIME_TYPE,
+        status_code=422,
+        detail="The uploaded MIME type is not supported.",
+    ),
+    UPLOAD_TOO_LARGE: ClosetErrorDefinition(
+        code=UPLOAD_TOO_LARGE,
+        status_code=422,
+        detail="The uploaded file exceeds the allowed size limit.",
+    ),
+    UPLOAD_DIMENSIONS_EXCEEDED: ClosetErrorDefinition(
+        code=UPLOAD_DIMENSIONS_EXCEEDED,
+        status_code=422,
+        detail="The uploaded image exceeds the allowed dimensions.",
+    ),
+    IDEMPOTENCY_CONFLICT: ClosetErrorDefinition(
+        code=IDEMPOTENCY_CONFLICT,
+        status_code=409,
+        detail="The idempotency key was reused with a different request payload.",
     ),
 }
 
