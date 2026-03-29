@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
-from app.domains.closet.errors import UNSUPPORTED_JOB_HANDLER
+from app.domains.closet.errors import UNSUPPORTED_JOB_HANDLER, ClosetDomainError
 from app.domains.closet.models import ClosetJob, ProcessingRunType
 from app.domains.closet.repository import ClosetJobRepository
 
@@ -45,8 +45,8 @@ class ClosetWorker:
         except Exception as exc:
             self.repository.mark_job_failed(
                 job=job,
-                error_code="job_handler_failed",
-                error_detail=str(exc),
+                error_code=exc.code if isinstance(exc, ClosetDomainError) else "job_handler_failed",
+                error_detail=exc.detail if isinstance(exc, ClosetDomainError) else str(exc),
             )
             self.session.commit()
             return job

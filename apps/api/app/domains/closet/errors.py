@@ -23,6 +23,9 @@ PROCESSING_ALREADY_SCHEDULED = "processing_already_scheduled"
 METADATA_EXTRACTION_ALREADY_SCHEDULED = "metadata_extraction_already_scheduled"
 METADATA_EXTRACTION_NOT_READY = "metadata_extraction_not_ready"
 METADATA_EXTRACTION_SOURCE_MISSING = "metadata_extraction_source_missing"
+METADATA_NORMALIZATION_ALREADY_SCHEDULED = "metadata_normalization_already_scheduled"
+METADATA_NORMALIZATION_NOT_READY = "metadata_normalization_not_ready"
+METADATA_NORMALIZATION_CANDIDATE_SET_MISSING = "metadata_normalization_candidate_set_missing"
 
 
 @dataclass(frozen=True)
@@ -147,6 +150,21 @@ ERROR_DEFINITIONS = {
         code=METADATA_EXTRACTION_SOURCE_MISSING,
         status_code=422,
         detail="No usable image source is available for metadata extraction.",
+    ),
+    METADATA_NORMALIZATION_ALREADY_SCHEDULED: ClosetErrorDefinition(
+        code=METADATA_NORMALIZATION_ALREADY_SCHEDULED,
+        status_code=409,
+        detail="Metadata normalization is already scheduled for this closet item.",
+    ),
+    METADATA_NORMALIZATION_NOT_READY: ClosetErrorDefinition(
+        code=METADATA_NORMALIZATION_NOT_READY,
+        status_code=409,
+        detail="This closet item is not ready for metadata normalization yet.",
+    ),
+    METADATA_NORMALIZATION_CANDIDATE_SET_MISSING: ClosetErrorDefinition(
+        code=METADATA_NORMALIZATION_CANDIDATE_SET_MISSING,
+        status_code=422,
+        detail="No usable metadata candidate set is available for normalization.",
     ),
 }
 

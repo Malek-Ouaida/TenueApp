@@ -10,7 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.storage import InMemoryStorageClient
+from app.domains.closet.metadata_extraction import METADATA_EXTRACTION_TASK_TYPE
 from app.domains.closet.models import (
+    ApplicabilityState,
     ClosetItemAuditEvent,
     ClosetItemFieldCandidate,
     ClosetItemFieldState,
@@ -19,6 +21,8 @@ from app.domains.closet.models import (
     ClosetItemMetadataProjection,
     ClosetJob,
     ClosetJobStatus,
+    FieldReviewState,
+    FieldSource,
     MediaAsset,
     ProcessingRun,
     ProcessingRunType,
@@ -26,6 +30,8 @@ from app.domains.closet.models import (
     ProviderResult,
     ProviderResultStatus,
 )
+from app.domains.closet.repository import ClosetRepository
+from app.domains.closet.taxonomy import TAXONOMY_VERSION
 from app.domains.closet.worker import ClosetWorker
 from app.domains.closet.worker_runner import build_worker_handlers
 
@@ -181,6 +187,32 @@ def run_worker_once(
     return worker.run_once(worker_name="test-closet-worker")
 
 
+def latest_provider_result_for_item(
+    db_session: Session, *, item_id: UUID
+) -> ProviderResult | None:
+    return (
+        db_session.execute(
+            select(ProviderResult)
+            .where(
+                ProviderResult.closet_item_id == item_id,
+                ProviderResult.task_type == METADATA_EXTRACTION_TASK_TYPE,
+            )
+            .order_by(ProviderResult.created_at.desc(), ProviderResult.id.desc())
+        )
+        .scalars()
+        .first()
+    )
+
+
+def field_state_map(db_session: Session, *, item_id: UUID) -> dict[str, ClosetItemFieldState]:
+    return {
+        field_state.field_name: field_state
+        for field_state in db_session.execute(
+            select(ClosetItemFieldState).where(ClosetItemFieldState.closet_item_id == item_id)
+        ).scalars()
+    }
+
+
 def test_extraction_snapshot_returns_not_requested_before_enqueue(
     client: TestClient,
     fake_storage_client: InMemoryStorageClient,
@@ -199,7 +231,11 @@ def test_extraction_snapshot_returns_not_requested_before_enqueue(
     assert response.status_code == 200
     body = response.json()
     assert body["extraction_status"] == "not_requested"
+    assert body["normalization_status"] == "not_requested"
+    assert body["field_states_stale"] is False
     assert body["current_candidate_set"] is None
+    assert body["current_field_states"] == []
+    assert body["metadata_projection"]["category"] is None
     assert body["source_image"]["role"] == "original"
 
 
@@ -365,6 +401,89 @@ def test_failed_image_processing_does_not_enqueue_metadata_extraction(
     assert jobs[0].job_kind == ProcessingRunType.IMAGE_PROCESSING
 
 
+def test_metadata_extraction_completion_auto_enqueues_normalization(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: InMemoryStorageClient,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+) -> None:
+    fake_background_removal_provider.succeed(
+        image_bytes=build_image_bytes(
+            size=(80, 96),
+            color=(255, 255, 255, 0),
+            image_format="PNG",
+            mode="RGBA",
+        )
+    )
+    fake_metadata_extraction_provider.succeed(
+        raw_fields={
+            "category": {"value": "top", "confidence": 0.99, "applicability_state": "value"},
+            "subcategory": {
+                "value": "tee shirt",
+                "confidence": 0.97,
+                "applicability_state": "value",
+            },
+        }
+    )
+    headers = register_and_get_headers(client, email="auto-enqueue-normalization@example.com")
+    item_id = create_uploaded_item(
+        client,
+        headers,
+        fake_storage_client,
+        draft_key="draft-auto-enqueue-normalization",
+        complete_key="complete-auto-enqueue-normalization",
+    )
+
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+
+    jobs = list(
+        db_session.execute(
+            select(ClosetJob)
+            .where(ClosetJob.closet_item_id == item_id)
+            .order_by(ClosetJob.created_at.asc(), ClosetJob.id.asc())
+        ).scalars()
+    )
+    audit_events = list(
+        db_session.execute(
+            select(ClosetItemAuditEvent).where(ClosetItemAuditEvent.closet_item_id == item_id)
+        ).scalars()
+    )
+
+    assert [job.job_kind for job in jobs] == [
+        ProcessingRunType.IMAGE_PROCESSING,
+        ProcessingRunType.METADATA_EXTRACTION,
+        ProcessingRunType.NORMALIZATION_PROJECTION,
+    ]
+    assert jobs[2].status == ClosetJobStatus.PENDING
+    assert isinstance(jobs[2].payload, dict)
+    assert jobs[2].payload["source_provider_result_id"]
+    enqueue_event = next(
+        event for event in audit_events if event.event_type == "metadata_normalization_enqueued"
+    )
+    assert isinstance(enqueue_event.payload, dict)
+    assert enqueue_event.payload["source_provider_result_id"] == jobs[2].payload[
+        "source_provider_result_id"
+    ]
+
+    response = client.get(f"/closet/items/{item_id}/extraction", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["normalization_status"] == "pending"
+    assert body["field_states_stale"] is True
+
+
 def test_metadata_extraction_worker_persists_candidates_and_keeps_trust_layer_untouched(
     client: TestClient,
     db_session: Session,
@@ -474,8 +593,12 @@ def test_metadata_extraction_worker_persists_candidates_and_keeps_trust_layer_un
     assert response.status_code == 200
     body = response.json()
     assert body["extraction_status"] == "completed"
+    assert body["normalization_status"] == "pending"
+    assert body["field_states_stale"] is True
     assert body["source_image"]["role"] == "processed"
     assert body["current_candidate_set"]["field_candidates"][0]["field_name"] == "category"
+    assert body["current_field_states"] == []
+    assert body["metadata_projection"]["category"] is None
 
 
 def test_partial_extraction_marks_completed_with_issues_and_keeps_valid_candidates(
@@ -529,6 +652,12 @@ def test_partial_extraction_marks_completed_with_issues_and_keeps_valid_candidat
         fake_background_removal_provider,
         fake_metadata_extraction_provider,
     )
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
 
     response = client.get(f"/closet/items/{item_id}/extraction", headers=headers)
 
@@ -541,6 +670,467 @@ def test_partial_extraction_marks_completed_with_issues_and_keeps_valid_candidat
         for candidate in body["current_candidate_set"]["field_candidates"]
     ]
     assert candidate_fields == ["category"]
+
+
+def test_normalization_materializes_field_states_and_keeps_projection_confirmed_only(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: InMemoryStorageClient,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+) -> None:
+    fake_background_removal_provider.succeed(
+        image_bytes=build_image_bytes(
+            size=(80, 96),
+            color=(255, 255, 255, 0),
+            image_format="PNG",
+            mode="RGBA",
+        )
+    )
+    fake_metadata_extraction_provider.succeed(
+        raw_fields={
+            "category": {"value": "top", "confidence": 0.99, "applicability_state": "value"},
+            "subcategory": {
+                "value": "tee shirt",
+                "confidence": 0.97,
+                "applicability_state": "value",
+            },
+            "colors": {
+                "values": ["grey", "navy blue", "taupe"],
+                "confidence": 0.91,
+                "applicability_state": "value",
+            },
+            "style_tags": {
+                "values": ["athleisure", "smart casual"],
+                "confidence": 0.62,
+                "applicability_state": "value",
+            },
+            "occasion_tags": {
+                "values": ["office", "vacation"],
+                "confidence": 0.74,
+                "applicability_state": "value",
+            },
+            "brand": {
+                "value": "  COS  ",
+                "confidence": 0.55,
+                "applicability_state": "value",
+            },
+        }
+    )
+    headers = register_and_get_headers(client, email="normalization-success@example.com")
+    item_id = create_uploaded_item(
+        client,
+        headers,
+        fake_storage_client,
+        draft_key="draft-normalization-success",
+        complete_key="complete-normalization-success",
+    )
+
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+
+    db_session.expire_all()
+    state_by_field = field_state_map(db_session, item_id=item_id)
+    projection = db_session.execute(
+        select(ClosetItemMetadataProjection).where(
+            ClosetItemMetadataProjection.closet_item_id == item_id
+        )
+    ).scalar_one()
+    latest_candidate_result = latest_provider_result_for_item(db_session, item_id=item_id)
+    assert latest_candidate_result is not None
+    field_candidates = list(
+        db_session.execute(
+            select(ClosetItemFieldCandidate)
+            .where(ClosetItemFieldCandidate.provider_result_id == latest_candidate_result.id)
+            .order_by(ClosetItemFieldCandidate.created_at.asc(), ClosetItemFieldCandidate.id.asc())
+        ).scalars()
+    )
+    normalization_run = (
+        db_session.execute(
+            select(ProcessingRun)
+            .where(
+                ProcessingRun.closet_item_id == item_id,
+                ProcessingRun.run_type == ProcessingRunType.NORMALIZATION_PROJECTION,
+            )
+            .order_by(ProcessingRun.created_at.desc(), ProcessingRun.id.desc())
+        )
+        .scalars()
+        .first()
+    )
+
+    assert normalization_run is not None
+    assert normalization_run.status == ProcessingStatus.COMPLETED_WITH_ISSUES
+    assert [candidate.field_name for candidate in field_candidates] == [
+        "category",
+        "subcategory",
+        "colors",
+        "style_tags",
+        "occasion_tags",
+        "brand",
+    ]
+    assert field_candidates[0].normalized_candidate == "tops"
+    assert field_candidates[1].normalized_candidate == "t-shirt"
+    assert field_candidates[2].normalized_candidate == ["gray", "navy"]
+    assert "taupe" in (field_candidates[2].conflict_notes or "")
+    assert field_candidates[3].normalized_candidate == ["sporty"]
+    assert "smart casual" in (field_candidates[3].conflict_notes or "")
+    assert field_candidates[4].normalized_candidate == ["business"]
+    assert "vacation" in (field_candidates[4].conflict_notes or "")
+    assert field_candidates[5].normalized_candidate == "COS"
+
+    assert set(state_by_field) == {
+        "title",
+        "category",
+        "subcategory",
+        "colors",
+        "material",
+        "pattern",
+        "brand",
+        "style_tags",
+        "occasion_tags",
+        "season_tags",
+    }
+    assert state_by_field["category"].source == FieldSource.PROVIDER
+    assert state_by_field["category"].review_state == FieldReviewState.PENDING_USER
+    assert state_by_field["category"].canonical_value == "tops"
+    assert state_by_field["subcategory"].canonical_value == "t-shirt"
+    assert state_by_field["colors"].canonical_value == ["gray", "navy"]
+    assert state_by_field["material"].source == FieldSource.SYSTEM
+    assert state_by_field["material"].review_state == FieldReviewState.SYSTEM_UNSET
+    assert state_by_field["material"].applicability_state == ApplicabilityState.UNKNOWN
+    assert state_by_field["brand"].canonical_value == "COS"
+
+    assert projection.category is None
+    assert projection.subcategory is None
+    assert projection.primary_color is None
+    assert projection.brand is None
+
+    response = client.get(f"/closet/items/{item_id}/extraction", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["normalization_status"] == "completed_with_issues"
+    assert body["field_states_stale"] is False
+    assert body["latest_normalization_run"]["status"] == "completed_with_issues"
+    assert [field_state["field_name"] for field_state in body["current_field_states"]] == [
+        "title",
+        "category",
+        "subcategory",
+        "colors",
+        "material",
+        "pattern",
+        "brand",
+        "style_tags",
+        "occasion_tags",
+        "season_tags",
+    ]
+    assert body["current_field_states"][1]["canonical_value"] == "tops"
+    assert body["current_field_states"][2]["canonical_value"] == "t-shirt"
+    assert body["current_field_states"][3]["canonical_value"] == ["gray", "navy"]
+    assert body["review_status"] == "needs_review"
+    assert body["metadata_projection"]["category"] is None
+
+
+def test_normalization_derives_category_and_preserves_unknown_states(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: InMemoryStorageClient,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+) -> None:
+    fake_background_removal_provider.succeed(
+        image_bytes=build_image_bytes(
+            size=(80, 96),
+            color=(255, 255, 255, 0),
+            image_format="PNG",
+            mode="RGBA",
+        )
+    )
+    fake_metadata_extraction_provider.succeed(
+        raw_fields={
+            "subcategory": {
+                "value": "tee shirt",
+                "confidence": 0.88,
+                "applicability_state": "value",
+            },
+            "material": {
+                "value": None,
+                "confidence": 0.4,
+                "applicability_state": "not_applicable",
+            },
+            "pattern": {
+                "value": None,
+                "confidence": 0.3,
+                "applicability_state": "unknown",
+            },
+        }
+    )
+    headers = register_and_get_headers(client, email="normalization-derived@example.com")
+    item_id = create_uploaded_item(
+        client,
+        headers,
+        fake_storage_client,
+        draft_key="draft-normalization-derived",
+        complete_key="complete-normalization-derived",
+    )
+
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+
+    state_by_field = field_state_map(db_session, item_id=item_id)
+
+    assert state_by_field["category"].source == FieldSource.PROVIDER
+    assert state_by_field["category"].canonical_value == "tops"
+    assert state_by_field["category"].confidence == 0.88
+    assert state_by_field["subcategory"].canonical_value == "t-shirt"
+    assert state_by_field["material"].source == FieldSource.PROVIDER
+    assert state_by_field["material"].applicability_state == ApplicabilityState.NOT_APPLICABLE
+    assert state_by_field["material"].canonical_value is None
+    assert state_by_field["pattern"].source == FieldSource.PROVIDER
+    assert state_by_field["pattern"].applicability_state == ApplicabilityState.UNKNOWN
+    assert state_by_field["pattern"].canonical_value is None
+
+    response = client.get(f"/closet/items/{item_id}/extraction", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["normalization_status"] == "completed_with_issues"
+    assert body["field_states_stale"] is False
+    assert body["current_field_states"][1]["canonical_value"] == "tops"
+    assert body["current_field_states"][4]["applicability_state"] == "not_applicable"
+    assert body["current_field_states"][5]["applicability_state"] == "unknown"
+
+
+def test_normalization_preserves_existing_user_field_states(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: InMemoryStorageClient,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+) -> None:
+    fake_background_removal_provider.succeed(
+        image_bytes=build_image_bytes(
+            size=(80, 96),
+            color=(255, 255, 255, 0),
+            image_format="PNG",
+            mode="RGBA",
+        )
+    )
+    fake_metadata_extraction_provider.succeed(
+        raw_fields={
+            "category": {"value": "shoe", "confidence": 0.9, "applicability_state": "value"},
+            "subcategory": {
+                "value": "boots",
+                "confidence": 0.88,
+                "applicability_state": "value",
+            },
+            "brand": {"value": "Other Brand", "confidence": 0.2, "applicability_state": "value"},
+        }
+    )
+    headers = register_and_get_headers(client, email="normalization-preserve-user@example.com")
+    item_id = create_uploaded_item(
+        client,
+        headers,
+        fake_storage_client,
+        draft_key="draft-normalization-preserve-user",
+        complete_key="complete-normalization-preserve-user",
+    )
+
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+
+    repository = ClosetRepository(db_session)
+    repository.upsert_field_state(
+        closet_item_id=item_id,
+        field_name="brand",
+        canonical_value="User Brand",
+        source=FieldSource.USER,
+        confidence=1.0,
+        review_state=FieldReviewState.USER_EDITED,
+        applicability_state=ApplicabilityState.VALUE,
+        taxonomy_version=TAXONOMY_VERSION,
+    )
+    db_session.commit()
+
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+
+    state_by_field = field_state_map(db_session, item_id=item_id)
+    assert state_by_field["brand"].source == FieldSource.USER
+    assert state_by_field["brand"].review_state == FieldReviewState.USER_EDITED
+    assert state_by_field["brand"].canonical_value == "User Brand"
+    assert state_by_field["category"].canonical_value == "shoes"
+    assert state_by_field["subcategory"].canonical_value == "boots"
+
+
+def test_failed_normalization_preserves_previous_field_states_and_marks_snapshot_stale(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: InMemoryStorageClient,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+) -> None:
+    fake_background_removal_provider.succeed(
+        image_bytes=build_image_bytes(
+            size=(80, 96),
+            color=(255, 255, 255, 0),
+            image_format="PNG",
+            mode="RGBA",
+        )
+    )
+    fake_metadata_extraction_provider.succeed(
+        raw_fields={
+            "category": {"value": "top", "confidence": 0.99, "applicability_state": "value"},
+            "subcategory": {
+                "value": "tee shirt",
+                "confidence": 0.97,
+                "applicability_state": "value",
+            },
+        }
+    )
+    headers = register_and_get_headers(client, email="normalization-failure-stale@example.com")
+    item_id = create_uploaded_item(
+        client,
+        headers,
+        fake_storage_client,
+        draft_key="draft-normalization-failure-stale",
+        complete_key="complete-normalization-failure-stale",
+    )
+
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+
+    original_field_states = field_state_map(db_session, item_id=item_id)
+    assert original_field_states["category"].canonical_value == "tops"
+
+    fake_metadata_extraction_provider.succeed(
+        raw_fields={
+            "category": {"value": "bottom", "confidence": 0.66, "applicability_state": "value"},
+            "subcategory": {
+                "value": "shorts",
+                "confidence": 0.65,
+                "applicability_state": "value",
+            },
+        }
+    )
+    reextract = client.post(
+        f"/closet/items/{item_id}/reextract",
+        headers={**headers, "Idempotency-Key": "normalization-failure-stale-reextract"},
+    )
+    assert reextract.status_code == 202
+
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+
+    newest_provider_result = latest_provider_result_for_item(db_session, item_id=item_id)
+    assert newest_provider_result is not None
+    candidates = list(
+        db_session.execute(
+            select(ClosetItemFieldCandidate).where(
+                ClosetItemFieldCandidate.provider_result_id == newest_provider_result.id
+            )
+        ).scalars()
+    )
+    for candidate in candidates:
+        db_session.delete(candidate)
+    db_session.commit()
+
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
+
+    latest_normalization_run = (
+        db_session.execute(
+            select(ProcessingRun)
+            .where(
+                ProcessingRun.closet_item_id == item_id,
+                ProcessingRun.run_type == ProcessingRunType.NORMALIZATION_PROJECTION,
+            )
+            .order_by(ProcessingRun.created_at.desc(), ProcessingRun.id.desc())
+        )
+        .scalars()
+        .first()
+    )
+    assert latest_normalization_run is not None
+    assert latest_normalization_run.status == ProcessingStatus.FAILED
+    preserved_field_states = field_state_map(db_session, item_id=item_id)
+    assert preserved_field_states["category"].canonical_value == "tops"
+    assert preserved_field_states["subcategory"].canonical_value == "t-shirt"
+
+    response = client.get(f"/closet/items/{item_id}/extraction", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["normalization_status"] == "failed"
+    assert body["field_states_stale"] is True
+    assert body["current_field_states"][1]["canonical_value"] == "tops"
+    assert body["current_field_states"][2]["canonical_value"] == "t-shirt"
 
 
 def test_reextract_is_idempotent_and_duplicate_schedule_is_rejected(
@@ -654,6 +1244,12 @@ def test_failed_reextract_preserves_previous_candidate_set(
     )
     assert reextract.status_code == 202
 
+    assert run_worker_once(
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+    )
     assert run_worker_once(
         db_session,
         fake_storage_client,

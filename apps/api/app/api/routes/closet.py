@@ -15,7 +15,9 @@ from app.api.schemas.closet import (
     ClosetExtractionCurrentCandidateSet,
     ClosetExtractionSnapshot,
     ClosetFieldCandidateSnapshot,
+    ClosetFieldStateSnapshot,
     ClosetMetadataOptionsResponse,
+    ClosetMetadataProjectionSnapshot,
     ClosetProcessingImageSnapshot,
     ClosetProcessingRunSnapshot,
     ClosetProcessingSnapshot,
@@ -319,12 +321,15 @@ def build_processing_snapshot(snapshot: ProcessingSnapshot) -> ClosetProcessingS
 
 def build_extraction_snapshot(snapshot: ExtractionSnapshot) -> ClosetExtractionSnapshot:
     latest_run = getattr(snapshot, "latest_run")
+    latest_normalization_run = getattr(snapshot, "latest_normalization_run")
     current_candidate_set = getattr(snapshot, "current_candidate_set")
     return ClosetExtractionSnapshot(
         item_id=getattr(snapshot, "item_id"),
         lifecycle_status=getattr(snapshot, "lifecycle_status"),
         review_status=getattr(snapshot, "review_status"),
         extraction_status=getattr(snapshot, "extraction_status"),
+        normalization_status=getattr(snapshot, "normalization_status"),
+        field_states_stale=getattr(snapshot, "field_states_stale"),
         can_reextract=getattr(snapshot, "can_reextract"),
         source_image=_build_image_payload(getattr(snapshot, "source_image")),
         latest_run=None
@@ -337,6 +342,21 @@ def build_extraction_snapshot(snapshot: ExtractionSnapshot) -> ClosetExtractionS
             started_at=getattr(latest_run, "started_at"),
             completed_at=getattr(latest_run, "completed_at"),
             failure_code=getattr(latest_run, "failure_code"),
+        ),
+        latest_normalization_run=None
+        if latest_normalization_run is None
+        else ClosetProcessingRunSnapshot(
+            id=getattr(latest_normalization_run, "id"),
+            run_type=getattr(latest_normalization_run, "run_type").value
+            if hasattr(getattr(latest_normalization_run, "run_type"), "value")
+            else getattr(latest_normalization_run, "run_type"),
+            status=getattr(latest_normalization_run, "status").value
+            if hasattr(getattr(latest_normalization_run, "status"), "value")
+            else getattr(latest_normalization_run, "status"),
+            retry_count=getattr(latest_normalization_run, "retry_count"),
+            started_at=getattr(latest_normalization_run, "started_at"),
+            completed_at=getattr(latest_normalization_run, "completed_at"),
+            failure_code=getattr(latest_normalization_run, "failure_code"),
         ),
         provider_results=[
             ClosetProviderResultSnapshot(
@@ -371,6 +391,39 @@ def build_extraction_snapshot(snapshot: ExtractionSnapshot) -> ClosetExtractionS
                 )
                 for candidate in getattr(current_candidate_set, "field_candidates")
             ],
+        ),
+        current_field_states=[
+            ClosetFieldStateSnapshot(
+                field_name=getattr(field_state, "field_name"),
+                canonical_value=getattr(field_state, "canonical_value"),
+                source=getattr(field_state, "source"),
+                confidence=getattr(field_state, "confidence"),
+                review_state=getattr(field_state, "review_state"),
+                applicability_state=getattr(field_state, "applicability_state"),
+                taxonomy_version=getattr(field_state, "taxonomy_version"),
+                updated_at=getattr(field_state, "updated_at"),
+            )
+            for field_state in getattr(snapshot, "current_field_states")
+        ],
+        metadata_projection=None
+        if getattr(snapshot, "metadata_projection") is None
+        else ClosetMetadataProjectionSnapshot(
+            taxonomy_version=getattr(getattr(snapshot, "metadata_projection"), "taxonomy_version"),
+            title=getattr(getattr(snapshot, "metadata_projection"), "title"),
+            category=getattr(getattr(snapshot, "metadata_projection"), "category"),
+            subcategory=getattr(getattr(snapshot, "metadata_projection"), "subcategory"),
+            primary_color=getattr(getattr(snapshot, "metadata_projection"), "primary_color"),
+            secondary_colors=getattr(
+                getattr(snapshot, "metadata_projection"), "secondary_colors"
+            ),
+            material=getattr(getattr(snapshot, "metadata_projection"), "material"),
+            pattern=getattr(getattr(snapshot, "metadata_projection"), "pattern"),
+            brand=getattr(getattr(snapshot, "metadata_projection"), "brand"),
+            style_tags=getattr(getattr(snapshot, "metadata_projection"), "style_tags"),
+            occasion_tags=getattr(getattr(snapshot, "metadata_projection"), "occasion_tags"),
+            season_tags=getattr(getattr(snapshot, "metadata_projection"), "season_tags"),
+            confirmed_at=getattr(getattr(snapshot, "metadata_projection"), "confirmed_at"),
+            updated_at=getattr(getattr(snapshot, "metadata_projection"), "updated_at"),
         ),
     )
 

@@ -17,6 +17,7 @@ from app.domains.closet.metadata_extraction import (
     build_metadata_extraction_provider,
 )
 from app.domains.closet.metadata_extraction_service import ClosetMetadataExtractionService
+from app.domains.closet.normalization_service import ClosetNormalizationService
 from app.domains.closet.repository import ClosetJobRepository, ClosetRepository
 from app.domains.closet.service import ClosetLifecycleService
 from app.domains.closet.upload_service import ClosetDraftUploadService
@@ -42,11 +43,24 @@ def get_metadata_extraction_provider() -> MetadataExtractionProvider:
     return build_metadata_extraction_provider()
 
 
+def get_closet_normalization_service(
+    db_session: Annotated[Session, Depends(get_db_session)],
+) -> ClosetNormalizationService:
+    return ClosetNormalizationService(
+        session=db_session,
+        repository=ClosetRepository(db_session),
+        job_repository=ClosetJobRepository(db_session),
+    )
+
+
 def get_closet_metadata_extraction_service(
     db_session: Annotated[Session, Depends(get_db_session)],
     storage_client: Annotated[ObjectStorageClient, Depends(get_storage_client)],
     metadata_extraction_provider: Annotated[
         MetadataExtractionProvider, Depends(get_metadata_extraction_provider)
+    ],
+    normalization_service: Annotated[
+        ClosetNormalizationService, Depends(get_closet_normalization_service)
     ],
 ) -> ClosetMetadataExtractionService:
     return ClosetMetadataExtractionService(
@@ -55,6 +69,7 @@ def get_closet_metadata_extraction_service(
         job_repository=ClosetJobRepository(db_session),
         storage=storage_client,
         metadata_provider=metadata_extraction_provider,
+        normalization_service=normalization_service,
     )
 
 

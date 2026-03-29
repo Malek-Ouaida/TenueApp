@@ -172,13 +172,46 @@ class ClosetExtractionCurrentCandidateSet(BaseModel):
     field_candidates: list[ClosetFieldCandidateSnapshot]
 
 
+class ClosetFieldStateSnapshot(BaseModel):
+    field_name: str
+    canonical_value: Any
+    source: str
+    confidence: float | None
+    review_state: str
+    applicability_state: str
+    taxonomy_version: str
+    updated_at: datetime
+
+
+class ClosetMetadataProjectionSnapshot(BaseModel):
+    taxonomy_version: str
+    title: str | None
+    category: str | None
+    subcategory: str | None
+    primary_color: str | None
+    secondary_colors: list[str] | None
+    material: str | None
+    pattern: str | None
+    brand: str | None
+    style_tags: list[str] | None
+    occasion_tags: list[str] | None
+    season_tags: list[str] | None
+    confirmed_at: datetime | None
+    updated_at: datetime
+
+
 class ClosetExtractionSnapshot(BaseModel):
     item_id: UUID
     lifecycle_status: str
     review_status: str
     extraction_status: str
+    normalization_status: str
+    field_states_stale: bool
     can_reextract: bool
     source_image: ClosetProcessingImageSnapshot | None
     latest_run: ClosetProcessingRunSnapshot | None
+    latest_normalization_run: ClosetProcessingRunSnapshot | None
     provider_results: list[ClosetProviderResultSnapshot]
     current_candidate_set: ClosetExtractionCurrentCandidateSet | None
+    current_field_states: list[ClosetFieldStateSnapshot]
+    metadata_projection: ClosetMetadataProjectionSnapshot | None
