@@ -5,12 +5,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
 from app.api.dependencies.auth import CurrentUser
 from app.api.dependencies.closet import (
+    get_closet_browse_service,
     get_closet_image_processing_service,
     get_closet_metadata_extraction_service,
     get_closet_review_service,
     get_closet_upload_service,
 )
 from app.api.schemas.closet import (
+    ClosetBrowseListItemSnapshot,
+    ClosetBrowseListResponse,
     ClosetConfirmRequest,
     ClosetDraftCreateRequest,
     ClosetDraftSnapshot,
@@ -18,6 +21,7 @@ from app.api.schemas.closet import (
     ClosetExtractionSnapshot,
     ClosetFieldCandidateSnapshot,
     ClosetFieldStateSnapshot,
+    ClosetItemDetailSnapshot,
     ClosetItemReviewSnapshot,
     ClosetMetadataOptionsResponse,
     ClosetMetadataProjectionSnapshot,
@@ -35,6 +39,13 @@ from app.api.schemas.closet import (
     ClosetUploadIntentRequest,
     ClosetUploadIntentResponse,
     PresignedUploadDescriptor,
+)
+from app.domains.closet.browse_service import (
+    BrowseDetailSnapshot,
+    BrowseListItemSnapshot,
+    ClosetBrowseService,
+    InvalidBrowseCursorError,
+    InvalidBrowseFilterError,
 )
 from app.domains.closet.errors import ClosetDomainError
 from app.domains.closet.image_processing_service import (
@@ -166,6 +177,57 @@ def read_review_queue(
         items=[build_draft_snapshot(item) for item in items],
         next_cursor=next_cursor,
     )
+
+
+@router.get("/items", response_model=ClosetBrowseListResponse)
+def read_confirmed_items(
+    current_user: CurrentUser,
+    browse_service: Annotated[ClosetBrowseService, Depends(get_closet_browse_service)],
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    query: str | None = None,
+    category: str | None = None,
+    subcategory: str | None = None,
+    color: str | None = None,
+    material: str | None = None,
+    pattern: str | None = None,
+) -> ClosetBrowseListResponse:
+    try:
+        items, next_cursor = browse_service.list_confirmed_items(
+            user_id=current_user.id,
+            cursor=cursor,
+            limit=limit,
+            query=query,
+            category=category,
+            subcategory=subcategory,
+            color=color,
+            material=material,
+            pattern=pattern,
+        )
+    except (InvalidBrowseCursorError, InvalidBrowseFilterError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return ClosetBrowseListResponse(
+        items=[build_browse_list_item_snapshot(item) for item in items],
+        next_cursor=next_cursor,
+    )
+
+
+@router.get("/items/{item_id}", response_model=ClosetItemDetailSnapshot)
+def read_confirmed_item_detail(
+    item_id: UUID,
+    current_user: CurrentUser,
+    browse_service: Annotated[ClosetBrowseService, Depends(get_closet_browse_service)],
+) -> ClosetItemDetailSnapshot:
+    try:
+        snapshot = browse_service.get_confirmed_item_detail(
+            item_id=item_id,
+            user_id=current_user.id,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_item_detail_snapshot(snapshot)
 
 
 @router.get("/items/{item_id}/processing", response_model=ClosetProcessingSnapshot)
@@ -414,12 +476,76 @@ def _build_field_state_payload(field_state: object) -> ClosetFieldStateSnapshot:
     return ClosetFieldStateSnapshot(
         field_name=getattr(field_state, "field_name"),
         canonical_value=getattr(field_state, "canonical_value"),
-        source=getattr(field_state, "source"),
+        source=_enum_str(getattr(field_state, "source")),
         confidence=getattr(field_state, "confidence"),
-        review_state=getattr(field_state, "review_state"),
-        applicability_state=getattr(field_state, "applicability_state"),
+        review_state=_enum_str(getattr(field_state, "review_state")),
+        applicability_state=_enum_str(getattr(field_state, "applicability_state")),
         taxonomy_version=getattr(field_state, "taxonomy_version"),
         updated_at=getattr(field_state, "updated_at"),
+    )
+
+
+def _build_metadata_projection_payload(
+    projection: object,
+) -> ClosetMetadataProjectionSnapshot:
+    return ClosetMetadataProjectionSnapshot(
+        taxonomy_version=getattr(projection, "taxonomy_version"),
+        title=getattr(projection, "title"),
+        category=getattr(projection, "category"),
+        subcategory=getattr(projection, "subcategory"),
+        primary_color=getattr(projection, "primary_color"),
+        secondary_colors=getattr(projection, "secondary_colors"),
+        material=getattr(projection, "material"),
+        pattern=getattr(projection, "pattern"),
+        brand=getattr(projection, "brand"),
+        style_tags=getattr(projection, "style_tags"),
+        occasion_tags=getattr(projection, "occasion_tags"),
+        season_tags=getattr(projection, "season_tags"),
+        confirmed_at=getattr(projection, "confirmed_at"),
+        updated_at=getattr(projection, "updated_at"),
+    )
+
+
+def build_browse_list_item_snapshot(
+    snapshot: BrowseListItemSnapshot,
+) -> ClosetBrowseListItemSnapshot:
+    return ClosetBrowseListItemSnapshot(
+        item_id=getattr(snapshot, "item_id"),
+        confirmed_at=getattr(snapshot, "confirmed_at"),
+        updated_at=getattr(snapshot, "updated_at"),
+        title=getattr(snapshot, "title"),
+        category=getattr(snapshot, "category"),
+        subcategory=getattr(snapshot, "subcategory"),
+        primary_color=getattr(snapshot, "primary_color"),
+        secondary_colors=getattr(snapshot, "secondary_colors"),
+        material=getattr(snapshot, "material"),
+        pattern=getattr(snapshot, "pattern"),
+        brand=getattr(snapshot, "brand"),
+        display_image=_build_image_payload(getattr(snapshot, "display_image")),
+        thumbnail_image=_build_image_payload(getattr(snapshot, "thumbnail_image")),
+    )
+
+
+def build_item_detail_snapshot(snapshot: BrowseDetailSnapshot) -> ClosetItemDetailSnapshot:
+    return ClosetItemDetailSnapshot(
+        item_id=getattr(snapshot, "item_id"),
+        lifecycle_status=getattr(snapshot, "lifecycle_status"),
+        processing_status=getattr(snapshot, "processing_status"),
+        review_status=getattr(snapshot, "review_status"),
+        failure_summary=getattr(snapshot, "failure_summary"),
+        confirmed_at=getattr(snapshot, "confirmed_at"),
+        created_at=getattr(snapshot, "created_at"),
+        updated_at=getattr(snapshot, "updated_at"),
+        display_image=_build_image_payload(getattr(snapshot, "display_image")),
+        thumbnail_image=_build_image_payload(getattr(snapshot, "thumbnail_image")),
+        original_image=_build_image_payload(getattr(snapshot, "original_image")),
+        metadata_projection=_build_metadata_projection_payload(
+            getattr(snapshot, "metadata_projection")
+        ),
+        field_states=[
+            _build_field_state_payload(field_state)
+            for field_state in getattr(snapshot, "field_states")
+        ],
     )
 
 
@@ -485,24 +611,7 @@ def build_extraction_snapshot(snapshot: ExtractionSnapshot) -> ClosetExtractionS
         ],
         metadata_projection=None
         if getattr(snapshot, "metadata_projection") is None
-        else ClosetMetadataProjectionSnapshot(
-            taxonomy_version=getattr(getattr(snapshot, "metadata_projection"), "taxonomy_version"),
-            title=getattr(getattr(snapshot, "metadata_projection"), "title"),
-            category=getattr(getattr(snapshot, "metadata_projection"), "category"),
-            subcategory=getattr(getattr(snapshot, "metadata_projection"), "subcategory"),
-            primary_color=getattr(getattr(snapshot, "metadata_projection"), "primary_color"),
-            secondary_colors=getattr(
-                getattr(snapshot, "metadata_projection"), "secondary_colors"
-            ),
-            material=getattr(getattr(snapshot, "metadata_projection"), "material"),
-            pattern=getattr(getattr(snapshot, "metadata_projection"), "pattern"),
-            brand=getattr(getattr(snapshot, "metadata_projection"), "brand"),
-            style_tags=getattr(getattr(snapshot, "metadata_projection"), "style_tags"),
-            occasion_tags=getattr(getattr(snapshot, "metadata_projection"), "occasion_tags"),
-            season_tags=getattr(getattr(snapshot, "metadata_projection"), "season_tags"),
-            confirmed_at=getattr(getattr(snapshot, "metadata_projection"), "confirmed_at"),
-            updated_at=getattr(getattr(snapshot, "metadata_projection"), "updated_at"),
-        ),
+        else _build_metadata_projection_payload(getattr(snapshot, "metadata_projection")),
     )
 
 
@@ -545,9 +654,7 @@ def build_review_snapshot(snapshot: ReviewSnapshot) -> ClosetItemReviewSnapshot:
                     applicability_state=getattr(
                         getattr(field, "suggested_state"), "applicability_state"
                     ),
-                    conflict_notes=getattr(
-                        getattr(field, "suggested_state"), "conflict_notes"
-                    ),
+                    conflict_notes=getattr(getattr(field, "suggested_state"), "conflict_notes"),
                     provider_result_id=getattr(
                         getattr(field, "suggested_state"), "provider_result_id"
                     ),
@@ -567,3 +674,7 @@ def _http_error(exc: ClosetDomainError) -> HTTPException:
         status_code=exc.status_code,
         detail={"code": exc.code, "message": exc.detail},
     )
+
+
+def _enum_str(value: object) -> str:
+    return str(getattr(value, "value", value))

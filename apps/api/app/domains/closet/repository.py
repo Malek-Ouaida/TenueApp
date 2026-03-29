@@ -37,6 +37,7 @@ from app.domains.closet.models import (
     ProcessingStatus,
     ProviderResult,
     ProviderResultStatus,
+    ReviewStatus,
     UploadIntentStatus,
     utcnow,
 )
@@ -639,6 +640,151 @@ class ClosetRepository:
             ClosetItemMetadataProjection.closet_item_id == item_id
         )
         return self.session.execute(statement).scalar_one_or_none()
+
+    def get_confirmed_item_with_projection_for_user(
+        self,
+        *,
+        item_id: UUID,
+        user_id: UUID,
+    ) -> tuple[ClosetItem, ClosetItemMetadataProjection] | None:
+        statement = (
+            select(ClosetItem, ClosetItemMetadataProjection)
+            .join(
+                ClosetItemMetadataProjection,
+                ClosetItemMetadataProjection.closet_item_id == ClosetItem.id,
+            )
+            .where(
+                ClosetItem.id == item_id,
+                ClosetItem.user_id == user_id,
+                ClosetItem.lifecycle_status == LifecycleStatus.CONFIRMED,
+                ClosetItem.review_status == ReviewStatus.CONFIRMED,
+                ClosetItem.confirmed_at.is_not(None),
+                ClosetItemMetadataProjection.user_id == user_id,
+            )
+        )
+        row = self.session.execute(statement).first()
+        if row is None:
+            return None
+        return row[0], row[1]
+
+    def list_confirmed_items(
+        self,
+        *,
+        user_id: UUID,
+        cursor_confirmed_at: datetime | None,
+        cursor_item_id: UUID | None,
+        limit: int,
+        query: str | None,
+        category: str | None,
+        subcategory: str | None,
+        primary_color: str | None,
+        material: str | None,
+        pattern: str | None,
+    ) -> list[tuple[ClosetItem, ClosetItemMetadataProjection]]:
+        normalized_cursor_confirmed_at = self._normalize_cursor_datetime(cursor_confirmed_at)
+        statement = (
+            select(ClosetItem, ClosetItemMetadataProjection)
+            .join(
+                ClosetItemMetadataProjection,
+                ClosetItemMetadataProjection.closet_item_id == ClosetItem.id,
+            )
+            .where(
+                ClosetItem.user_id == user_id,
+                ClosetItem.lifecycle_status == LifecycleStatus.CONFIRMED,
+                ClosetItem.review_status == ReviewStatus.CONFIRMED,
+                ClosetItem.confirmed_at.is_not(None),
+                ClosetItemMetadataProjection.user_id == user_id,
+            )
+        )
+
+        if category is not None:
+            statement = statement.where(ClosetItemMetadataProjection.category == category)
+        if subcategory is not None:
+            statement = statement.where(ClosetItemMetadataProjection.subcategory == subcategory)
+        if primary_color is not None:
+            statement = statement.where(ClosetItemMetadataProjection.primary_color == primary_color)
+        if material is not None:
+            statement = statement.where(ClosetItemMetadataProjection.material == material)
+        if pattern is not None:
+            statement = statement.where(ClosetItemMetadataProjection.pattern == pattern)
+
+        if query is not None:
+            query_pattern = f"%{query.casefold()}%"
+            statement = statement.where(
+                or_(
+                    func.lower(func.coalesce(ClosetItemMetadataProjection.title, "")).like(
+                        query_pattern
+                    ),
+                    func.lower(func.coalesce(ClosetItemMetadataProjection.brand, "")).like(
+                        query_pattern
+                    ),
+                    func.lower(func.coalesce(ClosetItemMetadataProjection.category, "")).like(
+                        query_pattern
+                    ),
+                    func.lower(func.coalesce(ClosetItemMetadataProjection.subcategory, "")).like(
+                        query_pattern
+                    ),
+                    func.lower(func.coalesce(ClosetItemMetadataProjection.primary_color, "")).like(
+                        query_pattern
+                    ),
+                    func.lower(func.coalesce(ClosetItemMetadataProjection.material, "")).like(
+                        query_pattern
+                    ),
+                    func.lower(func.coalesce(ClosetItemMetadataProjection.pattern, "")).like(
+                        query_pattern
+                    ),
+                )
+            )
+
+        if normalized_cursor_confirmed_at is not None and cursor_item_id is not None:
+            statement = statement.where(
+                or_(
+                    ClosetItem.confirmed_at < normalized_cursor_confirmed_at,
+                    and_(
+                        ClosetItem.confirmed_at == normalized_cursor_confirmed_at,
+                        ClosetItem.id < cursor_item_id,
+                    ),
+                )
+            )
+
+        statement = statement.order_by(ClosetItem.confirmed_at.desc(), ClosetItem.id.desc()).limit(
+            limit
+        )
+        return [(row[0], row[1]) for row in self.session.execute(statement).all()]
+
+    def list_active_image_assets_for_items(
+        self,
+        *,
+        closet_item_ids: list[UUID],
+        roles: list[ClosetItemImageRole],
+    ) -> dict[UUID, dict[ClosetItemImageRole, tuple[ClosetItemImage, MediaAsset]]]:
+        if not closet_item_ids or not roles:
+            return {}
+
+        statement = (
+            select(ClosetItemImage, MediaAsset)
+            .join(MediaAsset, MediaAsset.id == ClosetItemImage.asset_id)
+            .where(
+                ClosetItemImage.closet_item_id.in_(closet_item_ids),
+                ClosetItemImage.role.in_(roles),
+                ClosetItemImage.is_active.is_(True),
+            )
+            .order_by(
+                ClosetItemImage.closet_item_id.asc(),
+                ClosetItemImage.role.asc(),
+                ClosetItemImage.created_at.desc(),
+                ClosetItemImage.id.desc(),
+            )
+        )
+
+        images_by_item: dict[
+            UUID, dict[ClosetItemImageRole, tuple[ClosetItemImage, MediaAsset]]
+        ] = {}
+        for item_image, asset in self.session.execute(statement).all():
+            item_images = images_by_item.setdefault(item_image.closet_item_id, {})
+            if item_image.role not in item_images:
+                item_images[item_image.role] = (item_image, asset)
+        return images_by_item
 
     def list_review_items(
         self,

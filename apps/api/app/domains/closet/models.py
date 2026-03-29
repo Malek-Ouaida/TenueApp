@@ -155,6 +155,13 @@ class ClosetItem(Base):
             "lifecycle_status",
             "review_status",
         ),
+        Index(
+            "ix_closet_items_user_lifecycle_confirmed",
+            "user_id",
+            "lifecycle_status",
+            "confirmed_at",
+            "id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)

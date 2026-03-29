@@ -11,6 +11,7 @@ from app.domains.closet.background_removal import (
     BackgroundRemovalProvider,
     build_background_removal_provider,
 )
+from app.domains.closet.browse_service import ClosetBrowseService
 from app.domains.closet.image_processing_service import ClosetImageProcessingService
 from app.domains.closet.metadata_extraction import (
     MetadataExtractionProvider,
@@ -54,6 +55,16 @@ def get_closet_normalization_service(
     )
 
 
+def get_closet_browse_service(
+    db_session: Annotated[Session, Depends(get_db_session)],
+    storage_client: Annotated[ObjectStorageClient, Depends(get_storage_client)],
+) -> ClosetBrowseService:
+    return ClosetBrowseService(
+        repository=ClosetRepository(db_session),
+        storage=storage_client,
+    )
+
+
 def get_closet_lifecycle_service(
     db_session: Annotated[Session, Depends(get_db_session)],
 ) -> ClosetLifecycleService:
@@ -92,9 +103,7 @@ def get_closet_image_processing_service(
     metadata_extraction_service: Annotated[
         ClosetMetadataExtractionService, Depends(get_closet_metadata_extraction_service)
     ],
-    lifecycle_service: Annotated[
-        ClosetLifecycleService, Depends(get_closet_lifecycle_service)
-    ],
+    lifecycle_service: Annotated[ClosetLifecycleService, Depends(get_closet_lifecycle_service)],
 ) -> ClosetImageProcessingService:
     return ClosetImageProcessingService(
         session=db_session,
@@ -109,9 +118,7 @@ def get_closet_image_processing_service(
 
 def get_closet_review_service(
     db_session: Annotated[Session, Depends(get_db_session)],
-    lifecycle_service: Annotated[
-        ClosetLifecycleService, Depends(get_closet_lifecycle_service)
-    ],
+    lifecycle_service: Annotated[ClosetLifecycleService, Depends(get_closet_lifecycle_service)],
     image_processing_service: Annotated[
         ClosetImageProcessingService, Depends(get_closet_image_processing_service)
     ],
