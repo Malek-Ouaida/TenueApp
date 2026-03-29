@@ -7,22 +7,30 @@ from app.api.dependencies.auth import CurrentUser
 from app.api.dependencies.closet import (
     get_closet_image_processing_service,
     get_closet_metadata_extraction_service,
+    get_closet_review_service,
     get_closet_upload_service,
 )
 from app.api.schemas.closet import (
+    ClosetConfirmRequest,
     ClosetDraftCreateRequest,
     ClosetDraftSnapshot,
     ClosetExtractionCurrentCandidateSet,
     ClosetExtractionSnapshot,
     ClosetFieldCandidateSnapshot,
     ClosetFieldStateSnapshot,
+    ClosetItemReviewSnapshot,
     ClosetMetadataOptionsResponse,
     ClosetMetadataProjectionSnapshot,
     ClosetProcessingImageSnapshot,
     ClosetProcessingRunSnapshot,
     ClosetProcessingSnapshot,
     ClosetProviderResultSnapshot,
+    ClosetRetryActionSnapshot,
+    ClosetRetryRequest,
+    ClosetReviewFieldSnapshot,
     ClosetReviewListResponse,
+    ClosetReviewPatchRequest,
+    ClosetSuggestedFieldStateSnapshot,
     ClosetUploadCompleteRequest,
     ClosetUploadIntentRequest,
     ClosetUploadIntentResponse,
@@ -37,6 +45,7 @@ from app.domains.closet.metadata_extraction_service import (
     ClosetMetadataExtractionService,
     ExtractionSnapshot,
 )
+from app.domains.closet.review_service import ClosetReviewService, ReviewSnapshot
 from app.domains.closet.taxonomy import build_metadata_options
 from app.domains.closet.upload_service import ClosetDraftUploadService, InvalidReviewCursorError
 
@@ -220,6 +229,83 @@ def read_extraction_status(
     return build_extraction_snapshot(snapshot)
 
 
+@router.get("/items/{item_id}/review", response_model=ClosetItemReviewSnapshot)
+def read_item_review(
+    item_id: UUID,
+    current_user: CurrentUser,
+    review_service: Annotated[ClosetReviewService, Depends(get_closet_review_service)],
+) -> ClosetItemReviewSnapshot:
+    try:
+        snapshot = review_service.get_review_snapshot(
+            item_id=item_id,
+            user_id=current_user.id,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_review_snapshot(snapshot)
+
+
+@router.patch("/items/{item_id}", response_model=ClosetItemReviewSnapshot)
+def patch_item_review(
+    item_id: UUID,
+    payload: ClosetReviewPatchRequest,
+    current_user: CurrentUser,
+    review_service: Annotated[ClosetReviewService, Depends(get_closet_review_service)],
+) -> ClosetItemReviewSnapshot:
+    try:
+        snapshot = review_service.patch_review(
+            item_id=item_id,
+            user_id=current_user.id,
+            expected_review_version=payload.expected_review_version,
+            changes=[change.model_dump() for change in payload.changes],
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_review_snapshot(snapshot)
+
+
+@router.post("/items/{item_id}/confirm", response_model=ClosetItemReviewSnapshot)
+def confirm_item_review(
+    item_id: UUID,
+    payload: ClosetConfirmRequest,
+    current_user: CurrentUser,
+    review_service: Annotated[ClosetReviewService, Depends(get_closet_review_service)],
+) -> ClosetItemReviewSnapshot:
+    try:
+        snapshot = review_service.confirm_review(
+            item_id=item_id,
+            user_id=current_user.id,
+            expected_review_version=payload.expected_review_version,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_review_snapshot(snapshot)
+
+
+@router.post("/items/{item_id}/retry", response_model=ClosetItemReviewSnapshot, status_code=202)
+def retry_item_review(
+    item_id: UUID,
+    response: Response,
+    current_user: CurrentUser,
+    review_service: Annotated[ClosetReviewService, Depends(get_closet_review_service)],
+    payload: ClosetRetryRequest | None = None,
+) -> ClosetItemReviewSnapshot:
+    try:
+        snapshot, status_code = review_service.retry_review(
+            item_id=item_id,
+            user_id=current_user.id,
+            step=None if payload is None else payload.step,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    response.status_code = status_code
+    return build_review_snapshot(snapshot)
+
+
 @router.post("/items/{item_id}/reextract", response_model=ClosetExtractionSnapshot, status_code=202)
 def reextract_item_metadata(
     item_id: UUID,
@@ -280,8 +366,64 @@ def _build_image_payload(image: object | None) -> ClosetProcessingImageSnapshot 
     )
 
 
+def _build_run_payload(run: object | None) -> ClosetProcessingRunSnapshot | None:
+    if run is None:
+        return None
+    return ClosetProcessingRunSnapshot(
+        id=getattr(run, "id"),
+        run_type=getattr(run, "run_type").value
+        if hasattr(getattr(run, "run_type"), "value")
+        else getattr(run, "run_type"),
+        status=getattr(run, "status").value
+        if hasattr(getattr(run, "status"), "value")
+        else getattr(run, "status"),
+        retry_count=getattr(run, "retry_count"),
+        started_at=getattr(run, "started_at"),
+        completed_at=getattr(run, "completed_at"),
+        failure_code=getattr(run, "failure_code"),
+    )
+
+
+def _build_candidate_set_payload(
+    current_candidate_set: object | None,
+) -> ClosetExtractionCurrentCandidateSet | None:
+    if current_candidate_set is None:
+        return None
+    return ClosetExtractionCurrentCandidateSet(
+        provider_result_id=getattr(current_candidate_set, "provider_result_id"),
+        status=getattr(current_candidate_set, "status"),
+        created_at=getattr(current_candidate_set, "created_at"),
+        field_candidates=[
+            ClosetFieldCandidateSnapshot(
+                id=getattr(candidate, "id"),
+                field_name=getattr(candidate, "field_name"),
+                raw_value=getattr(candidate, "raw_value"),
+                normalized_candidate=getattr(candidate, "normalized_candidate"),
+                confidence=getattr(candidate, "confidence"),
+                applicability_state=getattr(candidate, "applicability_state"),
+                conflict_notes=getattr(candidate, "conflict_notes"),
+                provider_result_id=getattr(candidate, "provider_result_id"),
+                created_at=getattr(candidate, "created_at"),
+            )
+            for candidate in getattr(current_candidate_set, "field_candidates")
+        ],
+    )
+
+
+def _build_field_state_payload(field_state: object) -> ClosetFieldStateSnapshot:
+    return ClosetFieldStateSnapshot(
+        field_name=getattr(field_state, "field_name"),
+        canonical_value=getattr(field_state, "canonical_value"),
+        source=getattr(field_state, "source"),
+        confidence=getattr(field_state, "confidence"),
+        review_state=getattr(field_state, "review_state"),
+        applicability_state=getattr(field_state, "applicability_state"),
+        taxonomy_version=getattr(field_state, "taxonomy_version"),
+        updated_at=getattr(field_state, "updated_at"),
+    )
+
+
 def build_processing_snapshot(snapshot: ProcessingSnapshot) -> ClosetProcessingSnapshot:
-    latest_run = getattr(snapshot, "latest_run")
     return ClosetProcessingSnapshot(
         item_id=getattr(snapshot, "item_id"),
         lifecycle_status=getattr(snapshot, "lifecycle_status"),
@@ -289,17 +431,7 @@ def build_processing_snapshot(snapshot: ProcessingSnapshot) -> ClosetProcessingS
         review_status=getattr(snapshot, "review_status"),
         failure_summary=getattr(snapshot, "failure_summary"),
         can_reprocess=getattr(snapshot, "can_reprocess"),
-        latest_run=None
-        if latest_run is None
-        else ClosetProcessingRunSnapshot(
-            id=getattr(latest_run, "id"),
-            run_type=getattr(latest_run, "run_type"),
-            status=getattr(latest_run, "status"),
-            retry_count=getattr(latest_run, "retry_count"),
-            started_at=getattr(latest_run, "started_at"),
-            completed_at=getattr(latest_run, "completed_at"),
-            failure_code=getattr(latest_run, "failure_code"),
-        ),
+        latest_run=_build_run_payload(getattr(snapshot, "latest_run")),
         provider_results=[
             ClosetProviderResultSnapshot(
                 id=getattr(provider_result, "id"),
@@ -320,9 +452,6 @@ def build_processing_snapshot(snapshot: ProcessingSnapshot) -> ClosetProcessingS
 
 
 def build_extraction_snapshot(snapshot: ExtractionSnapshot) -> ClosetExtractionSnapshot:
-    latest_run = getattr(snapshot, "latest_run")
-    latest_normalization_run = getattr(snapshot, "latest_normalization_run")
-    current_candidate_set = getattr(snapshot, "current_candidate_set")
     return ClosetExtractionSnapshot(
         item_id=getattr(snapshot, "item_id"),
         lifecycle_status=getattr(snapshot, "lifecycle_status"),
@@ -332,32 +461,8 @@ def build_extraction_snapshot(snapshot: ExtractionSnapshot) -> ClosetExtractionS
         field_states_stale=getattr(snapshot, "field_states_stale"),
         can_reextract=getattr(snapshot, "can_reextract"),
         source_image=_build_image_payload(getattr(snapshot, "source_image")),
-        latest_run=None
-        if latest_run is None
-        else ClosetProcessingRunSnapshot(
-            id=getattr(latest_run, "id"),
-            run_type=getattr(latest_run, "run_type"),
-            status=getattr(latest_run, "status"),
-            retry_count=getattr(latest_run, "retry_count"),
-            started_at=getattr(latest_run, "started_at"),
-            completed_at=getattr(latest_run, "completed_at"),
-            failure_code=getattr(latest_run, "failure_code"),
-        ),
-        latest_normalization_run=None
-        if latest_normalization_run is None
-        else ClosetProcessingRunSnapshot(
-            id=getattr(latest_normalization_run, "id"),
-            run_type=getattr(latest_normalization_run, "run_type").value
-            if hasattr(getattr(latest_normalization_run, "run_type"), "value")
-            else getattr(latest_normalization_run, "run_type"),
-            status=getattr(latest_normalization_run, "status").value
-            if hasattr(getattr(latest_normalization_run, "status"), "value")
-            else getattr(latest_normalization_run, "status"),
-            retry_count=getattr(latest_normalization_run, "retry_count"),
-            started_at=getattr(latest_normalization_run, "started_at"),
-            completed_at=getattr(latest_normalization_run, "completed_at"),
-            failure_code=getattr(latest_normalization_run, "failure_code"),
-        ),
+        latest_run=_build_run_payload(getattr(snapshot, "latest_run")),
+        latest_normalization_run=_build_run_payload(getattr(snapshot, "latest_normalization_run")),
         provider_results=[
             ClosetProviderResultSnapshot(
                 id=getattr(provider_result, "id"),
@@ -371,38 +476,11 @@ def build_extraction_snapshot(snapshot: ExtractionSnapshot) -> ClosetExtractionS
             )
             for provider_result in getattr(snapshot, "provider_results")
         ],
-        current_candidate_set=None
-        if current_candidate_set is None
-        else ClosetExtractionCurrentCandidateSet(
-            provider_result_id=getattr(current_candidate_set, "provider_result_id"),
-            status=getattr(current_candidate_set, "status"),
-            created_at=getattr(current_candidate_set, "created_at"),
-            field_candidates=[
-                ClosetFieldCandidateSnapshot(
-                    id=getattr(candidate, "id"),
-                    field_name=getattr(candidate, "field_name"),
-                    raw_value=getattr(candidate, "raw_value"),
-                    normalized_candidate=getattr(candidate, "normalized_candidate"),
-                    confidence=getattr(candidate, "confidence"),
-                    applicability_state=getattr(candidate, "applicability_state"),
-                    conflict_notes=getattr(candidate, "conflict_notes"),
-                    provider_result_id=getattr(candidate, "provider_result_id"),
-                    created_at=getattr(candidate, "created_at"),
-                )
-                for candidate in getattr(current_candidate_set, "field_candidates")
-            ],
+        current_candidate_set=_build_candidate_set_payload(
+            getattr(snapshot, "current_candidate_set")
         ),
         current_field_states=[
-            ClosetFieldStateSnapshot(
-                field_name=getattr(field_state, "field_name"),
-                canonical_value=getattr(field_state, "canonical_value"),
-                source=getattr(field_state, "source"),
-                confidence=getattr(field_state, "confidence"),
-                review_state=getattr(field_state, "review_state"),
-                applicability_state=getattr(field_state, "applicability_state"),
-                taxonomy_version=getattr(field_state, "taxonomy_version"),
-                updated_at=getattr(field_state, "updated_at"),
-            )
+            _build_field_state_payload(field_state)
             for field_state in getattr(snapshot, "current_field_states")
         ],
         metadata_projection=None
@@ -424,6 +502,62 @@ def build_extraction_snapshot(snapshot: ExtractionSnapshot) -> ClosetExtractionS
             season_tags=getattr(getattr(snapshot, "metadata_projection"), "season_tags"),
             confirmed_at=getattr(getattr(snapshot, "metadata_projection"), "confirmed_at"),
             updated_at=getattr(getattr(snapshot, "metadata_projection"), "updated_at"),
+        ),
+    )
+
+
+def build_review_snapshot(snapshot: ReviewSnapshot) -> ClosetItemReviewSnapshot:
+    return ClosetItemReviewSnapshot(
+        item_id=getattr(snapshot, "item_id"),
+        lifecycle_status=getattr(snapshot, "lifecycle_status"),
+        processing_status=getattr(snapshot, "processing_status"),
+        extraction_status=getattr(snapshot, "extraction_status"),
+        normalization_status=getattr(snapshot, "normalization_status"),
+        review_status=getattr(snapshot, "review_status"),
+        failure_summary=getattr(snapshot, "failure_summary"),
+        confirmed_at=getattr(snapshot, "confirmed_at"),
+        review_version=getattr(snapshot, "review_version"),
+        can_confirm=getattr(snapshot, "can_confirm"),
+        missing_required_fields=list(getattr(snapshot, "missing_required_fields")),
+        field_states_stale=getattr(snapshot, "field_states_stale"),
+        retry_action=ClosetRetryActionSnapshot(
+            can_retry=getattr(getattr(snapshot, "retry_action"), "can_retry"),
+            default_step=getattr(getattr(snapshot, "retry_action"), "default_step"),
+            reason=getattr(getattr(snapshot, "retry_action"), "reason"),
+        ),
+        latest_processing_run=_build_run_payload(getattr(snapshot, "latest_processing_run")),
+        latest_extraction_run=_build_run_payload(getattr(snapshot, "latest_extraction_run")),
+        latest_normalization_run=_build_run_payload(getattr(snapshot, "latest_normalization_run")),
+        display_image=_build_image_payload(getattr(snapshot, "display_image")),
+        original_image=_build_image_payload(getattr(snapshot, "original_image")),
+        thumbnail_image=_build_image_payload(getattr(snapshot, "thumbnail_image")),
+        review_fields=[
+            ClosetReviewFieldSnapshot(
+                field_name=getattr(field, "field_name"),
+                required=getattr(field, "required"),
+                blocking_confirmation=getattr(field, "blocking_confirmation"),
+                current_state=_build_field_state_payload(getattr(field, "current_state")),
+                suggested_state=None
+                if getattr(field, "suggested_state") is None
+                else ClosetSuggestedFieldStateSnapshot(
+                    canonical_value=getattr(getattr(field, "suggested_state"), "canonical_value"),
+                    confidence=getattr(getattr(field, "suggested_state"), "confidence"),
+                    applicability_state=getattr(
+                        getattr(field, "suggested_state"), "applicability_state"
+                    ),
+                    conflict_notes=getattr(
+                        getattr(field, "suggested_state"), "conflict_notes"
+                    ),
+                    provider_result_id=getattr(
+                        getattr(field, "suggested_state"), "provider_result_id"
+                    ),
+                    is_derived=getattr(getattr(field, "suggested_state"), "is_derived"),
+                ),
+            )
+            for field in getattr(snapshot, "review_fields")
+        ],
+        current_candidate_set=_build_candidate_set_payload(
+            getattr(snapshot, "current_candidate_set")
         ),
     )
 

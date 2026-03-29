@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -215,3 +215,102 @@ class ClosetExtractionSnapshot(BaseModel):
     current_candidate_set: ClosetExtractionCurrentCandidateSet | None
     current_field_states: list[ClosetFieldStateSnapshot]
     metadata_projection: ClosetMetadataProjectionSnapshot | None
+
+
+class ClosetSuggestedFieldStateSnapshot(BaseModel):
+    canonical_value: Any
+    confidence: float | None
+    applicability_state: str
+    conflict_notes: str | None
+    provider_result_id: UUID | None
+    is_derived: bool
+
+
+class ClosetReviewFieldSnapshot(BaseModel):
+    field_name: str
+    required: bool
+    blocking_confirmation: bool
+    current_state: ClosetFieldStateSnapshot
+    suggested_state: ClosetSuggestedFieldStateSnapshot | None
+
+
+class ClosetRetryActionSnapshot(BaseModel):
+    can_retry: bool
+    default_step: str | None
+    reason: str | None
+
+
+class ClosetItemReviewSnapshot(BaseModel):
+    item_id: UUID
+    lifecycle_status: str
+    processing_status: str
+    extraction_status: str
+    normalization_status: str
+    review_status: str
+    failure_summary: str | None
+    confirmed_at: datetime | None
+    review_version: str
+    can_confirm: bool
+    missing_required_fields: list[str]
+    field_states_stale: bool
+    retry_action: ClosetRetryActionSnapshot
+    latest_processing_run: ClosetProcessingRunSnapshot | None
+    latest_extraction_run: ClosetProcessingRunSnapshot | None
+    latest_normalization_run: ClosetProcessingRunSnapshot | None
+    display_image: ClosetProcessingImageSnapshot | None
+    original_image: ClosetProcessingImageSnapshot | None
+    thumbnail_image: ClosetProcessingImageSnapshot | None
+    review_fields: list[ClosetReviewFieldSnapshot]
+    current_candidate_set: ClosetExtractionCurrentCandidateSet | None
+
+
+class ClosetReviewFieldChange(BaseModel):
+    field_name: str
+    operation: Literal[
+        "accept_suggestion",
+        "set_value",
+        "clear",
+        "mark_not_applicable",
+    ]
+    canonical_value: Any | None = None
+
+    @field_validator("field_name")
+    @classmethod
+    def normalize_field_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("field_name is required.")
+        return normalized
+
+
+class ClosetReviewPatchRequest(BaseModel):
+    expected_review_version: str
+    changes: list[ClosetReviewFieldChange] = Field(min_length=1)
+
+    @field_validator("expected_review_version")
+    @classmethod
+    def normalize_expected_review_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("expected_review_version is required.")
+        return normalized
+
+
+class ClosetConfirmRequest(BaseModel):
+    expected_review_version: str
+
+    @field_validator("expected_review_version")
+    @classmethod
+    def normalize_expected_review_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("expected_review_version is required.")
+        return normalized
+
+
+class ClosetRetryRequest(BaseModel):
+    step: Literal[
+        "image_processing",
+        "metadata_extraction",
+        "normalization_projection",
+    ] | None = None

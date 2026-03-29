@@ -19,6 +19,7 @@ from app.domains.closet.metadata_extraction import (
 from app.domains.closet.metadata_extraction_service import ClosetMetadataExtractionService
 from app.domains.closet.normalization_service import ClosetNormalizationService
 from app.domains.closet.repository import ClosetJobRepository, ClosetRepository
+from app.domains.closet.review_service import ClosetReviewService
 from app.domains.closet.service import ClosetLifecycleService
 from app.domains.closet.upload_service import ClosetDraftUploadService
 
@@ -53,6 +54,15 @@ def get_closet_normalization_service(
     )
 
 
+def get_closet_lifecycle_service(
+    db_session: Annotated[Session, Depends(get_db_session)],
+) -> ClosetLifecycleService:
+    return ClosetLifecycleService(
+        session=db_session,
+        repository=ClosetRepository(db_session),
+    )
+
+
 def get_closet_metadata_extraction_service(
     db_session: Annotated[Session, Depends(get_db_session)],
     storage_client: Annotated[ObjectStorageClient, Depends(get_storage_client)],
@@ -82,17 +92,44 @@ def get_closet_image_processing_service(
     metadata_extraction_service: Annotated[
         ClosetMetadataExtractionService, Depends(get_closet_metadata_extraction_service)
     ],
+    lifecycle_service: Annotated[
+        ClosetLifecycleService, Depends(get_closet_lifecycle_service)
+    ],
 ) -> ClosetImageProcessingService:
-    repository = ClosetRepository(db_session)
-    lifecycle_service = ClosetLifecycleService(session=db_session, repository=repository)
     return ClosetImageProcessingService(
         session=db_session,
-        repository=repository,
+        repository=ClosetRepository(db_session),
         job_repository=ClosetJobRepository(db_session),
         lifecycle_service=lifecycle_service,
         storage=storage_client,
         background_removal_provider=background_removal_provider,
         metadata_extraction_service=metadata_extraction_service,
+    )
+
+
+def get_closet_review_service(
+    db_session: Annotated[Session, Depends(get_db_session)],
+    lifecycle_service: Annotated[
+        ClosetLifecycleService, Depends(get_closet_lifecycle_service)
+    ],
+    image_processing_service: Annotated[
+        ClosetImageProcessingService, Depends(get_closet_image_processing_service)
+    ],
+    extraction_service: Annotated[
+        ClosetMetadataExtractionService, Depends(get_closet_metadata_extraction_service)
+    ],
+    normalization_service: Annotated[
+        ClosetNormalizationService, Depends(get_closet_normalization_service)
+    ],
+) -> ClosetReviewService:
+    return ClosetReviewService(
+        session=db_session,
+        repository=ClosetRepository(db_session),
+        job_repository=ClosetJobRepository(db_session),
+        lifecycle_service=lifecycle_service,
+        image_processing_service=image_processing_service,
+        extraction_service=extraction_service,
+        normalization_service=normalization_service,
     )
 
 
