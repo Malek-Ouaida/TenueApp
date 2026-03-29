@@ -200,6 +200,27 @@ class ClosetMetadataProjectionSnapshot(BaseModel):
     updated_at: datetime
 
 
+class ClosetBrowseListItemSnapshot(BaseModel):
+    item_id: UUID
+    confirmed_at: datetime
+    updated_at: datetime
+    title: str | None
+    category: str | None
+    subcategory: str | None
+    primary_color: str | None
+    secondary_colors: list[str] | None
+    material: str | None
+    pattern: str | None
+    brand: str | None
+    display_image: ClosetProcessingImageSnapshot | None
+    thumbnail_image: ClosetProcessingImageSnapshot | None
+
+
+class ClosetBrowseListResponse(BaseModel):
+    items: list[ClosetBrowseListItemSnapshot]
+    next_cursor: str | None
+
+
 class ClosetExtractionSnapshot(BaseModel):
     item_id: UUID
     lifecycle_status: str
@@ -215,6 +236,22 @@ class ClosetExtractionSnapshot(BaseModel):
     current_candidate_set: ClosetExtractionCurrentCandidateSet | None
     current_field_states: list[ClosetFieldStateSnapshot]
     metadata_projection: ClosetMetadataProjectionSnapshot | None
+
+
+class ClosetItemDetailSnapshot(BaseModel):
+    item_id: UUID
+    lifecycle_status: str
+    processing_status: str
+    review_status: str
+    failure_summary: str | None
+    confirmed_at: datetime
+    created_at: datetime
+    updated_at: datetime
+    display_image: ClosetProcessingImageSnapshot | None
+    thumbnail_image: ClosetProcessingImageSnapshot | None
+    original_image: ClosetProcessingImageSnapshot | None
+    metadata_projection: ClosetMetadataProjectionSnapshot
+    field_states: list[ClosetFieldStateSnapshot]
 
 
 class ClosetSuggestedFieldStateSnapshot(BaseModel):
@@ -309,8 +346,11 @@ class ClosetConfirmRequest(BaseModel):
 
 
 class ClosetRetryRequest(BaseModel):
-    step: Literal[
-        "image_processing",
-        "metadata_extraction",
-        "normalization_projection",
-    ] | None = None
+    step: (
+        Literal[
+            "image_processing",
+            "metadata_extraction",
+            "normalization_projection",
+        ]
+        | None
+    ) = None

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from app.domains.closet.models import LifecycleStatus, ProcessingStatus, ReviewStatus
 
 TAXONOMY_VERSION = "closet-taxonomy-v1"
@@ -77,6 +79,13 @@ STYLE_TAGS = ["casual", "sporty"]
 OCCASION_TAGS = ["formal", "business", "evening"]
 SEASON_TAGS = ["summer", "winter"]
 
+CATEGORY_VALUES = tuple(CATEGORY_SUBCATEGORIES.keys())
+SUBCATEGORY_VALUES = tuple(
+    subcategory
+    for subcategories in CATEGORY_SUBCATEGORIES.values()
+    for subcategory in subcategories
+)
+
 
 def build_metadata_options() -> dict[str, object]:
     return {
@@ -110,3 +119,47 @@ def is_supported_field_name(field_name: str) -> bool:
 
 def is_supported_taxonomy_version(value: str) -> bool:
     return value == TAXONOMY_VERSION
+
+
+def canonicalize_category_filter(value: str) -> str | None:
+    return _canonicalize_controlled_value(value, CATEGORY_VALUES)
+
+
+def canonicalize_subcategory_filter(value: str) -> str | None:
+    return _canonicalize_controlled_value(value, SUBCATEGORY_VALUES)
+
+
+def canonicalize_color_filter(value: str) -> str | None:
+    return _canonicalize_controlled_value(value, tuple(COLORS))
+
+
+def canonicalize_material_filter(value: str) -> str | None:
+    return _canonicalize_controlled_value(value, tuple(MATERIALS))
+
+
+def canonicalize_pattern_filter(value: str) -> str | None:
+    return _canonicalize_controlled_value(value, tuple(PATTERNS))
+
+
+def is_valid_category_subcategory_pair(*, category: str, subcategory: str) -> bool:
+    return subcategory in CATEGORY_SUBCATEGORIES.get(category, [])
+
+
+def _canonicalize_controlled_value(
+    value: str,
+    allowed_values: tuple[str, ...],
+) -> str | None:
+    normalized = _normalize_filter_value(value)
+    if not normalized:
+        return None
+
+    for allowed_value in allowed_values:
+        if _normalize_filter_value(allowed_value) == normalized:
+            return allowed_value
+
+    return None
+
+
+def _normalize_filter_value(value: str) -> str:
+    collapsed = re.sub(r"\s+", " ", value.strip())
+    return collapsed.casefold()
