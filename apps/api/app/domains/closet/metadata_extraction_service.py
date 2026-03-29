@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Any
+from typing import Any, Sequence
 from uuid import UUID
 
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -43,6 +43,7 @@ from app.domains.closet.models import (
     ProviderResultStatus,
     utcnow,
 )
+from app.domains.closet.normalization_service import ClosetNormalizationService
 from app.domains.closet.repository import ClosetJobRepository, ClosetRepository
 from app.domains.closet.taxonomy import SUPPORTED_FIELD_NAMES
 
@@ -113,11 +114,16 @@ class ExtractionSnapshot:
     lifecycle_status: str
     review_status: str
     extraction_status: str
+    normalization_status: str
+    field_states_stale: bool
     can_reextract: bool
     source_image: ExtractionSnapshotImage | None
     latest_run: ExtractionSnapshotRun | None
+    latest_normalization_run: ProcessingRun | None
     provider_results: list[ExtractionSnapshotProviderResult]
     current_candidate_set: ExtractionCurrentCandidateSet | None
+    current_field_states: Sequence[Any]
+    metadata_projection: object | None
 
 
 @dataclass(frozen=True)
@@ -155,12 +161,14 @@ class ClosetMetadataExtractionService:
         job_repository: ClosetJobRepository,
         storage: ObjectStorageClient,
         metadata_provider: MetadataExtractionProvider,
+        normalization_service: ClosetNormalizationService,
     ) -> None:
         self.session = session
         self.repository = repository
         self.job_repository = job_repository
         self.storage = storage
         self.metadata_provider = metadata_provider
+        self.normalization_service = normalization_service
 
     def enqueue_extraction_for_item(
         self,
@@ -231,6 +239,7 @@ class ClosetMetadataExtractionService:
             task_type=METADATA_EXTRACTION_TASK_TYPE,
         )
         current_candidate_set = self._build_current_candidate_set(latest_usable_result)
+        normalization_summary = self.normalization_service.get_summary_for_item(item=item)
 
         return ExtractionSnapshot(
             item_id=item.id,
@@ -240,9 +249,12 @@ class ClosetMetadataExtractionService:
                 latest_run=latest_run,
                 pending_or_running_job=pending_or_running_job,
             ),
+            normalization_status=normalization_summary.normalization_status,
+            field_states_stale=normalization_summary.field_states_stale,
             can_reextract=self._can_reextract(item=item),
             source_image=self._build_image_snapshot(self._select_source_image_record(item=item)),
             latest_run=self._build_run_snapshot(latest_run),
+            latest_normalization_run=normalization_summary.latest_run,
             provider_results=[
                 ExtractionSnapshotProviderResult(
                     id=provider_result.id,
@@ -257,6 +269,8 @@ class ClosetMetadataExtractionService:
                 for provider_result in provider_results
             ],
             current_candidate_set=current_candidate_set,
+            current_field_states=normalization_summary.current_field_states,
+            metadata_projection=normalization_summary.metadata_projection,
         )
 
     def reextract_item(
@@ -428,6 +442,16 @@ class ClosetMetadataExtractionService:
                     "provider_result_id": str(persisted_result.id),
                 },
             )
+            try:
+                self.normalization_service.enqueue_normalization_for_provider_result(
+                    item=item,
+                    provider_result=persisted_result,
+                    actor_type=AuditActorType.WORKER,
+                    actor_user_id=None,
+                    raise_on_duplicate=False,
+                )
+            except Exception:
+                pass
             return
 
         if parsed_candidates.status == ProviderResultStatus.PARTIAL:
@@ -445,6 +469,16 @@ class ClosetMetadataExtractionService:
                     "provider_result_id": str(persisted_result.id),
                 },
             )
+            try:
+                self.normalization_service.enqueue_normalization_for_provider_result(
+                    item=item,
+                    provider_result=persisted_result,
+                    actor_type=AuditActorType.WORKER,
+                    actor_user_id=None,
+                    raise_on_duplicate=False,
+                )
+            except Exception:
+                pass
             return
 
         self._finalize_failed_run(

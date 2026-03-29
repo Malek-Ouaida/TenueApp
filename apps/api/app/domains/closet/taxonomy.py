@@ -4,20 +4,19 @@ from app.domains.closet.models import LifecycleStatus, ProcessingStatus, ReviewS
 
 TAXONOMY_VERSION = "closet-taxonomy-v1"
 REQUIRED_CONFIRMATION_FIELDS = ("category", "subcategory")
-SUPPORTED_FIELD_NAMES = frozenset(
-    {
-        "title",
-        "category",
-        "subcategory",
-        "colors",
-        "material",
-        "pattern",
-        "brand",
-        "style_tags",
-        "occasion_tags",
-        "season_tags",
-    }
+SUPPORTED_FIELD_ORDER = (
+    "title",
+    "category",
+    "subcategory",
+    "colors",
+    "material",
+    "pattern",
+    "brand",
+    "style_tags",
+    "occasion_tags",
+    "season_tags",
 )
+SUPPORTED_FIELD_NAMES = frozenset(SUPPORTED_FIELD_ORDER)
 
 CATEGORY_SUBCATEGORIES = {
     "tops": ["t-shirt", "shirt", "blouse", "tank top", "sweater", "hoodie"],

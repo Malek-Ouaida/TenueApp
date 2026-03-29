@@ -19,6 +19,7 @@ from app.domains.closet.metadata_extraction import (
 )
 from app.domains.closet.metadata_extraction_service import ClosetMetadataExtractionService
 from app.domains.closet.models import ClosetJob, ProcessingRunType
+from app.domains.closet.normalization_service import ClosetNormalizationService
 from app.domains.closet.repository import ClosetJobRepository, ClosetRepository
 from app.domains.closet.service import ClosetLifecycleService
 from app.domains.closet.worker import JobHandler
@@ -53,6 +54,11 @@ def build_image_processing_handler(
             job_repository=ClosetJobRepository(session),
             storage=storage_client,
             metadata_provider=extraction_provider,
+            normalization_service=ClosetNormalizationService(
+                session=session,
+                repository=repository,
+                job_repository=ClosetJobRepository(session),
+            ),
         )
         processing_service = ClosetImageProcessingService(
             session=session,
@@ -83,8 +89,25 @@ def build_metadata_extraction_handler(
             job_repository=ClosetJobRepository(session),
             storage=storage_client,
             metadata_provider=provider,
+            normalization_service=ClosetNormalizationService(
+                session=session,
+                repository=ClosetRepository(session),
+                job_repository=ClosetJobRepository(session),
+            ),
         )
         extraction_service.handle_metadata_extraction_job(job=job)
+
+    return handler
+
+
+def build_normalization_handler() -> JobHandler:
+    def handler(session: Session, job: ClosetJob) -> None:
+        normalization_service = ClosetNormalizationService(
+            session=session,
+            repository=ClosetRepository(session),
+            job_repository=ClosetJobRepository(session),
+        )
+        normalization_service.handle_normalization_job(job=job)
 
     return handler
 
@@ -105,6 +128,7 @@ def build_worker_handlers(
             storage=storage,
             metadata_extraction_provider=metadata_extraction_provider,
         ),
+        ProcessingRunType.NORMALIZATION_PROJECTION: build_normalization_handler(),
     }
 
 

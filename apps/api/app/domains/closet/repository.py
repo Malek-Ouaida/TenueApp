@@ -193,6 +193,10 @@ class ClosetRepository:
         )
         return list(self.session.execute(statement).scalars())
 
+    def get_provider_result(self, *, provider_result_id: UUID) -> ProviderResult | None:
+        statement = select(ProviderResult).where(ProviderResult.id == provider_result_id)
+        return self.session.execute(statement).scalar_one_or_none()
+
     def list_provider_results_for_item_task(
         self,
         *,
@@ -268,6 +272,16 @@ class ClosetRepository:
             )
         )
         return list(self.session.execute(statement).scalars())
+
+    def count_field_candidates_for_provider_result(
+        self,
+        *,
+        provider_result_id: UUID,
+    ) -> int:
+        statement = select(func.count(ClosetItemFieldCandidate.id)).where(
+            ClosetItemFieldCandidate.provider_result_id == provider_result_id
+        )
+        return int(self.session.execute(statement).scalar_one())
 
     def create_upload_intent(
         self,
@@ -722,6 +736,22 @@ class ClosetJobRepository:
             .order_by(ClosetJob.created_at.desc(), ClosetJob.id.desc())
         )
         return self.session.execute(statement).scalars().first()
+
+    def list_jobs_for_item_kind(
+        self,
+        *,
+        closet_item_id: UUID,
+        job_kind: ProcessingRunType,
+    ) -> list[ClosetJob]:
+        statement = (
+            select(ClosetJob)
+            .where(
+                ClosetJob.closet_item_id == closet_item_id,
+                ClosetJob.job_kind == job_kind,
+            )
+            .order_by(ClosetJob.created_at.desc(), ClosetJob.id.desc())
+        )
+        return list(self.session.execute(statement).scalars())
 
     def enqueue_job(
         self,
