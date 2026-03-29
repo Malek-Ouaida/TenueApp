@@ -26,6 +26,11 @@ METADATA_EXTRACTION_SOURCE_MISSING = "metadata_extraction_source_missing"
 METADATA_NORMALIZATION_ALREADY_SCHEDULED = "metadata_normalization_already_scheduled"
 METADATA_NORMALIZATION_NOT_READY = "metadata_normalization_not_ready"
 METADATA_NORMALIZATION_CANDIDATE_SET_MISSING = "metadata_normalization_candidate_set_missing"
+STALE_REVIEW_VERSION = "stale_review_version"
+INVALID_REVIEW_MUTATION = "invalid_review_mutation"
+REVIEW_NOT_AVAILABLE = "review_not_available"
+RETRY_NOT_AVAILABLE = "retry_not_available"
+REVIEW_SUGGESTION_MISSING = "review_suggestion_missing"
 
 
 @dataclass(frozen=True)
@@ -165,6 +170,31 @@ ERROR_DEFINITIONS = {
         code=METADATA_NORMALIZATION_CANDIDATE_SET_MISSING,
         status_code=422,
         detail="No usable metadata candidate set is available for normalization.",
+    ),
+    STALE_REVIEW_VERSION: ClosetErrorDefinition(
+        code=STALE_REVIEW_VERSION,
+        status_code=409,
+        detail="The review payload is stale. Refresh the item and try again.",
+    ),
+    INVALID_REVIEW_MUTATION: ClosetErrorDefinition(
+        code=INVALID_REVIEW_MUTATION,
+        status_code=422,
+        detail="The requested review mutation is invalid.",
+    ),
+    REVIEW_NOT_AVAILABLE: ClosetErrorDefinition(
+        code=REVIEW_NOT_AVAILABLE,
+        status_code=409,
+        detail="This closet item is not available in the review flow.",
+    ),
+    RETRY_NOT_AVAILABLE: ClosetErrorDefinition(
+        code=RETRY_NOT_AVAILABLE,
+        status_code=409,
+        detail="No retryable review step is currently available for this closet item.",
+    ),
+    REVIEW_SUGGESTION_MISSING: ClosetErrorDefinition(
+        code=REVIEW_SUGGESTION_MISSING,
+        status_code=409,
+        detail="No usable suggestion is available for this field.",
     ),
 }
 

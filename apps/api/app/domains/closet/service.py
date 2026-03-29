@@ -206,6 +206,39 @@ class ClosetLifecycleService:
         taxonomy_version: str = TAXONOMY_VERSION,
     ) -> ClosetItemFieldState:
         item = self.repository.require_item_for_user(item_id=item_id, user_id=user_id)
+        field_state = self.save_field_state(
+            item=item,
+            field_name=field_name,
+            canonical_value=canonical_value,
+            source=source,
+            review_state=review_state,
+            applicability_state=applicability_state,
+            confidence=confidence,
+            taxonomy_version=taxonomy_version,
+        )
+        self.repository.create_audit_event(
+            closet_item_id=item.id,
+            actor_type=AuditActorType.USER,
+            actor_user_id=user_id,
+            event_type="field_state_upserted",
+            payload={"field_name": field_name},
+        )
+        self.session.commit()
+        self.session.refresh(field_state)
+        return field_state
+
+    def save_field_state(
+        self,
+        *,
+        item: ClosetItem,
+        field_name: str,
+        canonical_value: Any | None,
+        source: FieldSource,
+        review_state: FieldReviewState,
+        applicability_state: ApplicabilityState,
+        confidence: float | None = None,
+        taxonomy_version: str = TAXONOMY_VERSION,
+    ) -> ClosetItemFieldState:
         self._ensure_not_archived(item)
 
         if not is_supported_field_name(field_name):
@@ -231,15 +264,7 @@ class ClosetLifecycleService:
 
         self._recompute_review_readiness(item)
         self.repository.upsert_metadata_projection(item=item, taxonomy_version=taxonomy_version)
-        self.repository.create_audit_event(
-            closet_item_id=item.id,
-            actor_type=AuditActorType.USER,
-            actor_user_id=user_id,
-            event_type="field_state_upserted",
-            payload={"field_name": field_name},
-        )
-        self.session.commit()
-        self.session.refresh(field_state)
+        self.session.flush()
         return field_state
 
     def recompute_review_readiness(self, *, item_id: UUID, user_id: UUID) -> ClosetItem:

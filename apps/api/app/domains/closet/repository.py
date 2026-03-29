@@ -873,6 +873,9 @@ def is_confirmed_field_state(field_state: ClosetItemFieldState | None) -> bool:
     if field_state is None:
         return False
 
+    if field_state.source != FieldSource.USER:
+        return False
+
     if field_state.applicability_state != ApplicabilityState.VALUE:
         return False
 
