@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Annotated
 from uuid import UUID
 
@@ -552,7 +553,10 @@ def mark_similarity_edge_duplicate(
     return build_similarity_edge_snapshot(snapshot)
 
 
-def build_draft_snapshot(item: object, original_images: list[object]) -> ClosetDraftSnapshot:
+def build_draft_snapshot(
+    item: object,
+    original_images: Sequence[object | None],
+) -> ClosetDraftSnapshot:
     item_id = getattr(item, "id")
     title = getattr(item, "title")
     lifecycle_status = getattr(item, "lifecycle_status").value
@@ -570,7 +574,7 @@ def build_draft_snapshot(item: object, original_images: list[object]) -> ClosetD
         review_status=review_status,
         failure_summary=failure_summary,
         has_primary_image=has_primary_image,
-        original_images=[_build_image_payload(image) for image in original_images],
+        original_images=_build_image_payloads(original_images),
         created_at=created_at,
         updated_at=updated_at,
     )
@@ -591,6 +595,15 @@ def _build_image_payload(image: object | None) -> ClosetProcessingImageSnapshot 
         url=getattr(image, "url"),
         expires_at=getattr(image, "expires_at"),
     )
+
+
+def _build_image_payloads(images: Sequence[object | None]) -> list[ClosetProcessingImageSnapshot]:
+    payloads: list[ClosetProcessingImageSnapshot] = []
+    for image in images:
+        payload = _build_image_payload(image)
+        if payload is not None:
+            payloads.append(payload)
+    return payloads
 
 
 def _build_run_payload(run: object | None) -> ClosetProcessingRunSnapshot | None:
@@ -763,9 +776,7 @@ def build_item_detail_snapshot(snapshot: BrowseDetailSnapshot) -> ClosetItemDeta
         display_image=_build_image_payload(getattr(snapshot, "display_image")),
         thumbnail_image=_build_image_payload(getattr(snapshot, "thumbnail_image")),
         original_image=_build_image_payload(getattr(snapshot, "original_image")),
-        original_images=[
-            _build_image_payload(image) for image in getattr(snapshot, "original_images")
-        ],
+        original_images=_build_image_payloads(getattr(snapshot, "original_images")),
         metadata_projection=_build_metadata_projection_payload(
             getattr(snapshot, "metadata_projection")
         ),
@@ -800,9 +811,7 @@ def build_processing_snapshot(snapshot: ProcessingSnapshot) -> ClosetProcessingS
         ],
         display_image=_build_image_payload(getattr(snapshot, "display_image")),
         original_image=_build_image_payload(getattr(snapshot, "original_image")),
-        original_images=[
-            _build_image_payload(image) for image in getattr(snapshot, "original_images")
-        ],
+        original_images=_build_image_payloads(getattr(snapshot, "original_images")),
         thumbnail_image=_build_image_payload(getattr(snapshot, "thumbnail_image")),
     )
 
@@ -869,9 +878,7 @@ def build_review_snapshot(snapshot: ReviewSnapshot) -> ClosetItemReviewSnapshot:
         latest_normalization_run=_build_run_payload(getattr(snapshot, "latest_normalization_run")),
         display_image=_build_image_payload(getattr(snapshot, "display_image")),
         original_image=_build_image_payload(getattr(snapshot, "original_image")),
-        original_images=[
-            _build_image_payload(image) for image in getattr(snapshot, "original_images")
-        ],
+        original_images=_build_image_payloads(getattr(snapshot, "original_images")),
         thumbnail_image=_build_image_payload(getattr(snapshot, "thumbnail_image")),
         review_fields=[
             ClosetReviewFieldSnapshot(

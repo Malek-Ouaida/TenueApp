@@ -330,13 +330,18 @@ class ClosetBrowseService:
     def _build_original_image_snapshots(self, *, item: object) -> list[ProcessingSnapshotImage]:
         item_id = getattr(item, "id")
         primary_image_id = getattr(item, "primary_image_id", None)
-        return [
-            self._build_image_snapshot(image_record, primary_image_id=primary_image_id)
-            for image_record in self.repository.list_active_image_assets_for_item(
-                closet_item_id=item_id,
-                role=ClosetItemImageRole.ORIGINAL,
+        snapshots: list[ProcessingSnapshotImage] = []
+        for image_record in self.repository.list_active_image_assets_for_item(
+            closet_item_id=item_id,
+            role=ClosetItemImageRole.ORIGINAL,
+        ):
+            snapshot = self._build_image_snapshot(
+                image_record,
+                primary_image_id=primary_image_id,
             )
-        ]
+            if snapshot is not None:
+                snapshots.append(snapshot)
+        return snapshots
 
     def _build_image_snapshot(
         self,

@@ -487,13 +487,18 @@ class ClosetImageProcessingService:
             )
 
     def _build_original_image_snapshots(self, *, item: ClosetItem) -> list[ProcessingSnapshotImage]:
-        return [
-            self._build_image_snapshot(image_record, primary_image_id=item.primary_image_id)
-            for image_record in self.repository.list_active_image_assets_for_item(
-                closet_item_id=item.id,
-                role=ClosetItemImageRole.ORIGINAL,
+        snapshots: list[ProcessingSnapshotImage] = []
+        for image_record in self.repository.list_active_image_assets_for_item(
+            closet_item_id=item.id,
+            role=ClosetItemImageRole.ORIGINAL,
+        ):
+            snapshot = self._build_image_snapshot(
+                image_record,
+                primary_image_id=item.primary_image_id,
             )
-        ]
+            if snapshot is not None:
+                snapshots.append(snapshot)
+        return snapshots
 
     def _build_image_snapshot(
         self,
