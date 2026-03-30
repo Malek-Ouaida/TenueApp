@@ -429,6 +429,20 @@ class ClosetItemSimilarityEdge(Base):
             "similarity_type",
             unique=True,
         ),
+        Index(
+            "ix_closet_similarity_edges_item_a_decision_type_updated",
+            "item_a_id",
+            "decision_status",
+            "similarity_type",
+            "updated_at",
+        ),
+        Index(
+            "ix_closet_similarity_edges_item_b_decision_type_updated",
+            "item_b_id",
+            "decision_status",
+            "similarity_type",
+            "updated_at",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)

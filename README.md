@@ -2,11 +2,11 @@
 
 Tenue is an AI-powered closet companion with a closet-first architecture.
 
-This repository now includes the **Phase 04 closet ingestion backend foundation** on top of the earlier auth and profile identity slices.
+This repository now includes the **Phase 04 closet backend foundation** on top of the earlier auth and profile identity slices.
 
 The current implemented product slice is the early closet pipeline:
 
-`photo -> upload draft -> processing/background removal -> AI metadata extraction`
+`photo -> upload draft -> processing/background removal -> AI metadata extraction -> review/confirm -> confirmed browse/detail -> similarity`
 
 That work is backend-first today. Confirmation/editing, closet browse/detail surfaces, stylist flows, lookbook, stats, and try-on are still later phases.
 
@@ -57,9 +57,12 @@ That work is backend-first today. Confirmation/editing, closet browse/detail sur
 - closet drafts can be created through authenticated APIs, uploaded privately to MinIO/S3-compatible storage, finalized safely, and listed in a review queue
 - closet image processing runs asynchronously through the durable worker, producing processed assets, thumbnails, processing snapshots, and manual reprocess support
 - raw AI metadata extraction now runs after image processing, stores append-only provider results plus field candidates, and exposes extraction status plus manual re-extract APIs
+- review and confirmation flows now let the user accept or override AI suggestions before an item becomes confirmed closet truth
+- confirmed closet items now support browse/detail APIs backed by confirmed metadata projections only
+- confirmed closet items now support explainable similarity and duplicate-detection APIs, including dismiss and mark-duplicate actions plus a similarity backfill path for already-confirmed items
 - Alembic is configured for an env-driven Postgres database URL
 - local infra workflows exist for Supabase Postgres and MinIO
-- the closet flow is still backend-only; confirmation/editing, confirmed-item browse/detail, and downstream intelligence features are not implemented yet
+- the closet flow is still backend-only; web/mobile closet surfaces and downstream intelligence features are not implemented yet
 
 ## Root commands
 
@@ -87,6 +90,7 @@ PYTHONPATH=. uv run python -m app.domains.closet.worker_runner
 ```
 
 Use `--once` to process at most one queued closet job and exit.
+Use `--enqueue-similarity-backfill` to enqueue similarity recompute jobs for confirmed items that do not yet have a completed similarity run.
 
 ## Workspace rules
 

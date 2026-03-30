@@ -4,8 +4,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy.orm import Session, aliased
 
 from app.domains.closet.errors import (
     CLOSET_ITEM_NOT_FOUND,
@@ -24,6 +24,7 @@ from app.domains.closet.models import (
     ClosetItemImage,
     ClosetItemImageRole,
     ClosetItemMetadataProjection,
+    ClosetItemSimilarityEdge,
     ClosetJob,
     ClosetJobStatus,
     ClosetUploadIntent,
@@ -38,6 +39,8 @@ from app.domains.closet.models import (
     ProviderResult,
     ProviderResultStatus,
     ReviewStatus,
+    SimilarityDecisionStatus,
+    SimilarityType,
     UploadIntentStatus,
     utcnow,
 )
@@ -667,6 +670,71 @@ class ClosetRepository:
             return None
         return row[0], row[1]
 
+    def get_confirmed_items_with_projections_for_user(
+        self,
+        *,
+        item_ids: list[UUID],
+        user_id: UUID,
+    ) -> dict[UUID, tuple[ClosetItem, ClosetItemMetadataProjection]]:
+        if not item_ids:
+            return {}
+
+        statement = (
+            select(ClosetItem, ClosetItemMetadataProjection)
+            .join(
+                ClosetItemMetadataProjection,
+                ClosetItemMetadataProjection.closet_item_id == ClosetItem.id,
+            )
+            .where(
+                ClosetItem.id.in_(item_ids),
+                ClosetItem.user_id == user_id,
+                ClosetItem.lifecycle_status == LifecycleStatus.CONFIRMED,
+                ClosetItem.review_status == ReviewStatus.CONFIRMED,
+                ClosetItem.confirmed_at.is_not(None),
+                ClosetItemMetadataProjection.user_id == user_id,
+            )
+        )
+        return {
+            item.id: (item, projection)
+            for item, projection in self.session.execute(statement).all()
+        }
+
+    def list_confirmed_peer_items_with_projections(
+        self,
+        *,
+        item_id: UUID,
+        user_id: UUID,
+    ) -> list[tuple[ClosetItem, ClosetItemMetadataProjection]]:
+        statement = (
+            select(ClosetItem, ClosetItemMetadataProjection)
+            .join(
+                ClosetItemMetadataProjection,
+                ClosetItemMetadataProjection.closet_item_id == ClosetItem.id,
+            )
+            .where(
+                ClosetItem.id != item_id,
+                ClosetItem.user_id == user_id,
+                ClosetItem.lifecycle_status == LifecycleStatus.CONFIRMED,
+                ClosetItem.review_status == ReviewStatus.CONFIRMED,
+                ClosetItem.confirmed_at.is_not(None),
+                ClosetItemMetadataProjection.user_id == user_id,
+            )
+            .order_by(ClosetItem.confirmed_at.desc(), ClosetItem.id.desc())
+        )
+        return [(row[0], row[1]) for row in self.session.execute(statement).all()]
+
+    def list_all_confirmed_items(self) -> list[ClosetItem]:
+        statement = (
+            select(ClosetItem)
+            .where(
+                ClosetItem.lifecycle_status == LifecycleStatus.CONFIRMED,
+                ClosetItem.review_status == ReviewStatus.CONFIRMED,
+                ClosetItem.confirmed_at.is_not(None),
+            )
+            .order_by(ClosetItem.confirmed_at.desc(), ClosetItem.id.desc())
+        )
+        return list(self.session.execute(statement).scalars())
+
     def list_confirmed_items(
         self,
         *,
@@ -818,6 +886,132 @@ class ClosetRepository:
         )
         return list(self.session.execute(statement).scalars())
 
+    def list_similarity_edges_for_item(self, *, item_id: UUID) -> list[ClosetItemSimilarityEdge]:
+        statement = (
+            select(ClosetItemSimilarityEdge)
+            .where(
+                or_(
+                    ClosetItemSimilarityEdge.item_a_id == item_id,
+                    ClosetItemSimilarityEdge.item_b_id == item_id,
+                )
+            )
+            .order_by(
+                ClosetItemSimilarityEdge.updated_at.desc(),
+                ClosetItemSimilarityEdge.id.desc(),
+            )
+        )
+        return list(self.session.execute(statement).scalars())
+
+    def list_similarity_edges_for_pair(
+        self,
+        *,
+        item_a_id: UUID,
+        item_b_id: UUID,
+    ) -> list[ClosetItemSimilarityEdge]:
+        canonical_item_a_id, canonical_item_b_id = canonicalize_similarity_pair(
+            item_a_id,
+            item_b_id,
+        )
+        statement = (
+            select(ClosetItemSimilarityEdge)
+            .where(
+                ClosetItemSimilarityEdge.item_a_id == canonical_item_a_id,
+                ClosetItemSimilarityEdge.item_b_id == canonical_item_b_id,
+            )
+            .order_by(
+                ClosetItemSimilarityEdge.updated_at.desc(),
+                ClosetItemSimilarityEdge.id.desc(),
+            )
+        )
+        return list(self.session.execute(statement).scalars())
+
+    def get_similarity_edge_for_user(
+        self,
+        *,
+        edge_id: UUID,
+        user_id: UUID,
+    ) -> ClosetItemSimilarityEdge | None:
+        item_a = aliased(ClosetItem)
+        item_b = aliased(ClosetItem)
+        statement = (
+            select(ClosetItemSimilarityEdge)
+            .join(item_a, item_a.id == ClosetItemSimilarityEdge.item_a_id)
+            .join(item_b, item_b.id == ClosetItemSimilarityEdge.item_b_id)
+            .where(
+                ClosetItemSimilarityEdge.id == edge_id,
+                item_a.user_id == user_id,
+                item_b.user_id == user_id,
+            )
+        )
+        return self.session.execute(statement).scalar_one_or_none()
+
+    def save_similarity_edge(
+        self,
+        *,
+        edge: ClosetItemSimilarityEdge | None,
+        item_a_id: UUID,
+        item_b_id: UUID,
+        similarity_type: SimilarityType,
+        score: float,
+        signals_json: Any | None,
+        decision_status: SimilarityDecisionStatus,
+    ) -> ClosetItemSimilarityEdge:
+        canonical_item_a_id, canonical_item_b_id = canonicalize_similarity_pair(
+            item_a_id,
+            item_b_id,
+        )
+        if edge is None:
+            edge = ClosetItemSimilarityEdge(
+                item_a_id=canonical_item_a_id,
+                item_b_id=canonical_item_b_id,
+                similarity_type=similarity_type,
+                score=score,
+                signals_json=signals_json,
+                decision_status=decision_status,
+            )
+            self.session.add(edge)
+        else:
+            edge.item_a_id = canonical_item_a_id
+            edge.item_b_id = canonical_item_b_id
+            edge.similarity_type = similarity_type
+            edge.score = score
+            edge.signals_json = signals_json
+            edge.decision_status = decision_status
+        self.session.flush()
+        return edge
+
+    def delete_similarity_edges_for_pair(
+        self,
+        *,
+        item_a_id: UUID,
+        item_b_id: UUID,
+        keep_edge_id: UUID | None = None,
+    ) -> None:
+        canonical_item_a_id, canonical_item_b_id = canonicalize_similarity_pair(
+            item_a_id,
+            item_b_id,
+        )
+        statement = select(ClosetItemSimilarityEdge).where(
+            ClosetItemSimilarityEdge.item_a_id == canonical_item_a_id,
+            ClosetItemSimilarityEdge.item_b_id == canonical_item_b_id,
+        )
+        for edge in self.session.execute(statement).scalars():
+            if keep_edge_id is not None and edge.id == keep_edge_id:
+                continue
+            self.session.delete(edge)
+        self.session.flush()
+
+    def delete_similarity_edges_for_item(self, *, item_id: UUID) -> None:
+        statement = select(ClosetItemSimilarityEdge).where(
+            or_(
+                ClosetItemSimilarityEdge.item_a_id == item_id,
+                ClosetItemSimilarityEdge.item_b_id == item_id,
+            )
+        )
+        for edge in self.session.execute(statement).scalars():
+            self.session.delete(edge)
+        self.session.flush()
+
     def _normalize_cursor_datetime(self, value: datetime | None) -> datetime | None:
         if value is None:
             return None
@@ -927,13 +1121,22 @@ class ClosetJobRepository:
         now: datetime | None = None,
     ) -> ClosetJob | None:
         current_time = self._normalize_datetime(now or utcnow())
+        job_priority = case(
+            (ClosetJob.job_kind == ProcessingRunType.SIMILARITY_RECOMPUTE, 1),
+            else_=0,
+        )
         statement = (
             select(ClosetJob)
             .where(
                 ClosetJob.status == ClosetJobStatus.PENDING,
                 ClosetJob.available_at <= current_time,
             )
-            .order_by(ClosetJob.available_at.asc(), ClosetJob.created_at.asc(), ClosetJob.id.asc())
+            .order_by(
+                job_priority.asc(),
+                ClosetJob.available_at.asc(),
+                ClosetJob.created_at.asc(),
+                ClosetJob.id.asc(),
+            )
         )
         job = self.session.execute(statement).scalars().first()
         if job is None:
@@ -1066,3 +1269,9 @@ def extract_list_value(field_state: ClosetItemFieldState | None) -> list[str]:
         stripped = value.strip()
         return [stripped] if stripped else []
     return []
+
+
+def canonicalize_similarity_pair(item_a_id: UUID, item_b_id: UUID) -> tuple[UUID, UUID]:
+    if item_a_id.int <= item_b_id.int:
+        return item_a_id, item_b_id
+    return item_b_id, item_a_id

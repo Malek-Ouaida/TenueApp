@@ -51,6 +51,7 @@ from app.domains.closet.repository import (
     is_confirmed_field_state,
 )
 from app.domains.closet.service import ClosetLifecycleService
+from app.domains.closet.similarity_service import ClosetSimilarityService
 from app.domains.closet.taxonomy import (
     CATEGORY_SUBCATEGORIES,
     COLORS,
@@ -178,6 +179,7 @@ class ClosetReviewService:
         image_processing_service: ClosetImageProcessingService,
         extraction_service: ClosetMetadataExtractionService,
         normalization_service: ClosetNormalizationService,
+        similarity_service: ClosetSimilarityService,
     ) -> None:
         self.session = session
         self.repository = repository
@@ -186,6 +188,7 @@ class ClosetReviewService:
         self.image_processing_service = image_processing_service
         self.extraction_service = extraction_service
         self.normalization_service = normalization_service
+        self.similarity_service = similarity_service
 
     def get_review_snapshot(
         self,
@@ -298,7 +301,18 @@ class ClosetReviewService:
             expected_review_version=expected_review_version,
             actual_review_version=context.review_version,
         )
-        self.lifecycle_service.confirm_item(item_id=item_id, user_id=user_id)
+        item = self.lifecycle_service.confirm_item(
+            item_id=item_id,
+            user_id=user_id,
+            commit=False,
+        )
+        self.similarity_service.enqueue_similarity_for_item(
+            item=item,
+            actor_type=AuditActorType.USER,
+            actor_user_id=user_id,
+            raise_on_duplicate=False,
+        )
+        self.session.commit()
         return self._build_review_snapshot(
             item_id=item_id,
             user_id=user_id,

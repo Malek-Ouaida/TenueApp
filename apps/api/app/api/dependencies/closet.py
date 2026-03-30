@@ -22,6 +22,7 @@ from app.domains.closet.normalization_service import ClosetNormalizationService
 from app.domains.closet.repository import ClosetJobRepository, ClosetRepository
 from app.domains.closet.review_service import ClosetReviewService
 from app.domains.closet.service import ClosetLifecycleService
+from app.domains.closet.similarity_service import ClosetSimilarityService
 from app.domains.closet.upload_service import ClosetDraftUploadService
 
 
@@ -61,6 +62,18 @@ def get_closet_browse_service(
 ) -> ClosetBrowseService:
     return ClosetBrowseService(
         repository=ClosetRepository(db_session),
+        storage=storage_client,
+    )
+
+
+def get_closet_similarity_service(
+    db_session: Annotated[Session, Depends(get_db_session)],
+    storage_client: Annotated[ObjectStorageClient, Depends(get_storage_client)],
+) -> ClosetSimilarityService:
+    return ClosetSimilarityService(
+        session=db_session,
+        repository=ClosetRepository(db_session),
+        job_repository=ClosetJobRepository(db_session),
         storage=storage_client,
     )
 
@@ -128,6 +141,9 @@ def get_closet_review_service(
     normalization_service: Annotated[
         ClosetNormalizationService, Depends(get_closet_normalization_service)
     ],
+    similarity_service: Annotated[
+        ClosetSimilarityService, Depends(get_closet_similarity_service)
+    ],
 ) -> ClosetReviewService:
     return ClosetReviewService(
         session=db_session,
@@ -137,6 +153,7 @@ def get_closet_review_service(
         image_processing_service=image_processing_service,
         extraction_service=extraction_service,
         normalization_service=normalization_service,
+        similarity_service=similarity_service,
     )
 
 
