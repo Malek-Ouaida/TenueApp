@@ -21,7 +21,7 @@ from app.domains.closet.models import (
     ProviderResultStatus,
     utcnow,
 )
-from app.domains.closet.repository import ClosetRepository
+from app.domains.closet.repository import ClosetJobRepository, ClosetRepository
 from app.domains.closet.taxonomy import SUPPORTED_FIELD_ORDER
 from app.domains.closet.worker import ClosetWorker
 from app.domains.closet.worker_runner import build_worker_handlers
@@ -794,6 +794,64 @@ def test_confirm_requires_user_truth_and_keeps_optional_provider_values_out_of_p
     assert projection.category == "tops"
     assert projection.subcategory == "t-shirt"
     assert projection.brand is None
+
+
+def test_confirm_enqueues_similarity_once_and_ignores_existing_pending_similarity_job(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: InMemoryStorageClient,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+) -> None:
+    headers, item_id = create_normalized_review_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        raw_fields={
+            "category": {"value": "top", "confidence": 0.98, "applicability_state": "value"},
+            "subcategory": {
+                "value": "tee shirt",
+                "confidence": 0.97,
+                "applicability_state": "value",
+            },
+        },
+        email="review-confirm-similarity@example.com",
+    )
+    job_repository = ClosetJobRepository(db_session)
+    job_repository.enqueue_job(
+        closet_item_id=item_id,
+        job_kind=ProcessingRunType.SIMILARITY_RECOMPUTE,
+        payload={"trigger": "seeded"},
+    )
+    db_session.commit()
+
+    before = read_review_snapshot(client, headers, item_id=item_id)
+    accepted = patch_review(
+        client,
+        headers,
+        item_id=item_id,
+        expected_review_version=before["review_version"],
+        changes=[
+            {"field_name": "category", "operation": "accept_suggestion"},
+            {"field_name": "subcategory", "operation": "accept_suggestion"},
+        ],
+    )
+
+    confirmed = confirm_review(
+        client,
+        headers,
+        item_id=item_id,
+        expected_review_version=accepted.json()["review_version"],
+    )
+
+    assert confirmed.status_code == 200
+    similarity_jobs = job_repository.list_jobs_for_item_kind(
+        closet_item_id=item_id,
+        job_kind=ProcessingRunType.SIMILARITY_RECOMPUTE,
+    )
+    assert len(similarity_jobs) == 1
 
 
 def test_retry_defaults_to_image_processing_when_processing_failed(

@@ -688,6 +688,7 @@ Risks to avoid
 too many states
 giant taxonomy
 mixing provider logic into schema sprint
+
 Sprint 2 — Closet upload and draft flow
 Goal
 
@@ -709,6 +710,7 @@ Risks to avoid
 direct public uploads
 duplicate draft creation
 missing ownership checks
+
 Sprint 3 — Closet image processing
 Goal
 
@@ -730,6 +732,7 @@ Risks to avoid
 hard-failing item creation on cutout failure
 no fallback image
 non-resumable pipeline
+
 Sprint 4 — Closet metadata extraction
 Goal
 
@@ -750,6 +753,7 @@ Risks to avoid
 letting vendor output become canonical truth
 no append-only record
 brittle JSON parsing without recovery
+
 Sprint 5 — Metadata normalization and trust layer
 Goal
 
@@ -771,6 +775,7 @@ Risks to avoid
 full ontology explosion
 hiding uncertainty
 mixing user truth with provider truth
+
 Sprint 6 — Confirmation and editing
 Goal
 
@@ -792,6 +797,7 @@ Risks to avoid
 overblocking confirmation
 losing AI suggestions after manual edit
 no stale-review protection
+
 Sprint 7 — Browse, search, filter, detail
 Goal
 
@@ -813,6 +819,7 @@ Risks to avoid
 exposing unconfirmed noisy items by default
 weak pagination
 search built on raw non-normalized fields
+
 Sprint 8 — Similarity and duplicate detection
 Goal
 

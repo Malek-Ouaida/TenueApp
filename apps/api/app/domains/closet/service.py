@@ -279,7 +279,13 @@ class ClosetLifecycleService:
         self.session.refresh(item)
         return item
 
-    def confirm_item(self, *, item_id: UUID, user_id: UUID) -> ClosetItem:
+    def confirm_item(
+        self,
+        *,
+        item_id: UUID,
+        user_id: UUID,
+        commit: bool = True,
+    ) -> ClosetItem:
         item = self.repository.require_item_for_user(item_id=item_id, user_id=user_id)
         self._ensure_not_archived(item)
         if item.lifecycle_status != LifecycleStatus.REVIEW:
@@ -309,8 +315,11 @@ class ClosetLifecycleService:
             event_type="item_confirmed",
             payload={"confirmed_at": item.confirmed_at.isoformat()},
         )
-        self.session.commit()
-        self.session.refresh(item)
+        if commit:
+            self.session.commit()
+            self.session.refresh(item)
+        else:
+            self.session.flush()
         return item
 
     def archive_item(self, *, item_id: UUID, user_id: UUID) -> ClosetItem:

@@ -10,6 +10,7 @@ from app.api.dependencies.closet import (
     get_closet_lifecycle_service,
     get_closet_metadata_extraction_service,
     get_closet_review_service,
+    get_closet_similarity_service,
     get_closet_upload_service,
 )
 from app.api.schemas.closet import (
@@ -37,6 +38,10 @@ from app.api.schemas.closet import (
     ClosetReviewFieldSnapshot,
     ClosetReviewListResponse,
     ClosetReviewPatchRequest,
+    ClosetSimilarityEdgeSnapshot,
+    ClosetSimilarityListItemSnapshot,
+    ClosetSimilarityListResponse,
+    ClosetSimilaritySignalSnapshot,
     ClosetSuggestedFieldStateSnapshot,
     ClosetUploadCompleteRequest,
     ClosetUploadIntentRequest,
@@ -63,6 +68,12 @@ from app.domains.closet.review_service import ClosetReviewService, ReviewSnapsho
 from app.domains.closet.service import (
     ClosetLifecycleService,
     InvalidHistoryCursorError,
+)
+from app.domains.closet.similarity_service import (
+    ClosetSimilarityService,
+    SimilarityEdgeSnapshot,
+    SimilarityListItemSnapshot,
+    SimilarityListSnapshot,
 )
 from app.domains.closet.taxonomy import build_metadata_options
 from app.domains.closet.upload_service import ClosetDraftUploadService, InvalidReviewCursorError
@@ -288,6 +299,48 @@ def read_item_history(
     )
 
 
+@router.get("/items/{item_id}/similar", response_model=ClosetSimilarityListResponse)
+def read_similar_items(
+    item_id: UUID,
+    current_user: CurrentUser,
+    similarity_service: Annotated[
+        ClosetSimilarityService, Depends(get_closet_similarity_service)
+    ],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> ClosetSimilarityListResponse:
+    try:
+        snapshot = similarity_service.list_similar_items(
+            item_id=item_id,
+            user_id=current_user.id,
+            limit=limit,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_similarity_list_snapshot(snapshot)
+
+
+@router.get("/items/{item_id}/duplicates", response_model=ClosetSimilarityListResponse)
+def read_duplicate_items(
+    item_id: UUID,
+    current_user: CurrentUser,
+    similarity_service: Annotated[
+        ClosetSimilarityService, Depends(get_closet_similarity_service)
+    ],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> ClosetSimilarityListResponse:
+    try:
+        snapshot = similarity_service.list_duplicate_items(
+            item_id=item_id,
+            user_id=current_user.id,
+            limit=limit,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_similarity_list_snapshot(snapshot)
+
+
 @router.get("/items/{item_id}/processing", response_model=ClosetProcessingSnapshot)
 def read_processing_status(
     item_id: UUID,
@@ -461,6 +514,42 @@ def reextract_item_metadata(
 
     response.status_code = status_code
     return build_extraction_snapshot(snapshot)
+@router.post("/similarity/{edge_id}/dismiss", response_model=ClosetSimilarityEdgeSnapshot)
+def dismiss_similarity_edge(
+    edge_id: UUID,
+    current_user: CurrentUser,
+    similarity_service: Annotated[
+        ClosetSimilarityService, Depends(get_closet_similarity_service)
+    ],
+) -> ClosetSimilarityEdgeSnapshot:
+    try:
+        snapshot = similarity_service.dismiss_edge(
+            edge_id=edge_id,
+            user_id=current_user.id,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_similarity_edge_snapshot(snapshot)
+
+
+@router.post("/similarity/{edge_id}/mark-duplicate", response_model=ClosetSimilarityEdgeSnapshot)
+def mark_similarity_edge_duplicate(
+    edge_id: UUID,
+    current_user: CurrentUser,
+    similarity_service: Annotated[
+        ClosetSimilarityService, Depends(get_closet_similarity_service)
+    ],
+) -> ClosetSimilarityEdgeSnapshot:
+    try:
+        snapshot = similarity_service.mark_edge_duplicate(
+            edge_id=edge_id,
+            user_id=current_user.id,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_similarity_edge_snapshot(snapshot)
 
 
 def build_draft_snapshot(item: object, original_images: list[object]) -> ClosetDraftSnapshot:
@@ -599,6 +688,65 @@ def build_browse_list_item_snapshot(
         brand=getattr(snapshot, "brand"),
         display_image=_build_image_payload(getattr(snapshot, "display_image")),
         thumbnail_image=_build_image_payload(getattr(snapshot, "thumbnail_image")),
+    )
+
+
+def build_similarity_edge_snapshot(
+    snapshot: SimilarityEdgeSnapshot,
+) -> ClosetSimilarityEdgeSnapshot:
+    return ClosetSimilarityEdgeSnapshot(
+        edge_id=getattr(snapshot, "edge_id"),
+        item_a_id=getattr(snapshot, "item_a_id"),
+        item_b_id=getattr(snapshot, "item_b_id"),
+        label=getattr(snapshot, "label"),
+        similarity_type=getattr(snapshot, "similarity_type"),
+        decision_status=getattr(snapshot, "decision_status"),
+        score=getattr(snapshot, "score"),
+        signals=[
+            ClosetSimilaritySignalSnapshot(
+                code=getattr(signal, "code"),
+                label=getattr(signal, "label"),
+                contribution=getattr(signal, "contribution"),
+                metadata=getattr(signal, "metadata"),
+            )
+            for signal in getattr(snapshot, "signals")
+        ],
+    )
+
+
+def build_similarity_list_item_snapshot(
+    snapshot: SimilarityListItemSnapshot,
+) -> ClosetSimilarityListItemSnapshot:
+    return ClosetSimilarityListItemSnapshot(
+        edge_id=getattr(snapshot, "edge_id"),
+        label=getattr(snapshot, "label"),
+        similarity_type=getattr(snapshot, "similarity_type"),
+        decision_status=getattr(snapshot, "decision_status"),
+        score=getattr(snapshot, "score"),
+        signals=[
+            ClosetSimilaritySignalSnapshot(
+                code=getattr(signal, "code"),
+                label=getattr(signal, "label"),
+                contribution=getattr(signal, "contribution"),
+                metadata=getattr(signal, "metadata"),
+            )
+            for signal in getattr(snapshot, "signals")
+        ],
+        other_item=build_browse_list_item_snapshot(getattr(snapshot, "other_item")),
+    )
+
+
+def build_similarity_list_snapshot(
+    snapshot: SimilarityListSnapshot,
+) -> ClosetSimilarityListResponse:
+    return ClosetSimilarityListResponse(
+        item_id=getattr(snapshot, "item_id"),
+        similarity_status=getattr(snapshot, "similarity_status"),
+        latest_run=_build_run_payload(getattr(snapshot, "latest_run")),
+        items=[
+            build_similarity_list_item_snapshot(item)
+            for item in getattr(snapshot, "items")
+        ],
     )
 
 

@@ -31,6 +31,8 @@ INVALID_REVIEW_MUTATION = "invalid_review_mutation"
 REVIEW_NOT_AVAILABLE = "review_not_available"
 RETRY_NOT_AVAILABLE = "retry_not_available"
 REVIEW_SUGGESTION_MISSING = "review_suggestion_missing"
+SIMILARITY_EDGE_NOT_FOUND = "similarity_edge_not_found"
+SIMILARITY_RECOMPUTE_ALREADY_SCHEDULED = "similarity_recompute_already_scheduled"
 
 
 @dataclass(frozen=True)
@@ -195,6 +197,16 @@ ERROR_DEFINITIONS = {
         code=REVIEW_SUGGESTION_MISSING,
         status_code=409,
         detail="No usable suggestion is available for this field.",
+    ),
+    SIMILARITY_EDGE_NOT_FOUND: ClosetErrorDefinition(
+        code=SIMILARITY_EDGE_NOT_FOUND,
+        status_code=404,
+        detail="Similarity edge not found.",
+    ),
+    SIMILARITY_RECOMPUTE_ALREADY_SCHEDULED: ClosetErrorDefinition(
+        code=SIMILARITY_RECOMPUTE_ALREADY_SCHEDULED,
+        status_code=409,
+        detail="Similarity recompute is already scheduled for this closet item.",
     ),
 }
 
