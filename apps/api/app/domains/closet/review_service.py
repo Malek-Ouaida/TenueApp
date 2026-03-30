@@ -138,6 +138,7 @@ class ReviewSnapshot:
     latest_normalization_run: Any
     display_image: Any
     original_image: Any
+    original_images: list[Any]
     thumbnail_image: Any
     review_fields: list[ReviewFieldSnapshot]
     current_candidate_set: ExtractionCurrentCandidateSet | None
@@ -446,6 +447,7 @@ class ClosetReviewService:
             latest_normalization_run=context.extraction_snapshot.latest_normalization_run,
             display_image=context.processing_snapshot.display_image,
             original_image=context.processing_snapshot.original_image,
+            original_images=context.processing_snapshot.original_images,
             thumbnail_image=context.processing_snapshot.thumbnail_image,
             review_fields=review_fields,
             current_candidate_set=context.extraction_snapshot.current_candidate_set,

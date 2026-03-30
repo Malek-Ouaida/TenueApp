@@ -252,7 +252,7 @@ def test_create_upload_intent_rejects_invalid_checksum_format(client: TestClient
     assert response.status_code == 422
 
 
-def test_create_upload_intent_rejects_draft_with_primary_image(
+def test_create_second_upload_intent_after_primary_image_is_allowed(
     client: TestClient,
     fake_storage_client: InMemoryStorageClient,
 ) -> None:
@@ -288,7 +288,8 @@ def test_create_upload_intent_rejects_draft_with_primary_image(
         file_size=len(image_bytes),
         sha256=sha256_hex(image_bytes),
     )
-    assert second_intent.status_code == 409
+    assert second_intent.status_code == 200
+    assert second_intent.json()["upload_intent_id"] != upload_response.json()["upload_intent_id"]
 
 
 def test_finalize_upload_success(
@@ -572,6 +573,90 @@ def test_finalize_upload_persists_asset_and_audit_run(
     assert any(event.event_type == "image_processing_enqueued" for event in audit_events)
     assert len(processing_runs) == 1
     assert processing_runs[0].run_type == ProcessingRunType.UPLOAD_VALIDATION
+    assert len(jobs) == 1
+    assert jobs[0].job_kind == ProcessingRunType.IMAGE_PROCESSING
+
+
+def test_finalize_additional_upload_appends_original_image_without_reenqueuing_processing(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: InMemoryStorageClient,
+) -> None:
+    headers = register_and_get_headers(client, email="closet-upload-multi@example.com")
+    draft = create_draft(client, headers, idempotency_key="draft-key-multi").json()
+    first_image_bytes = build_image_bytes(color=(24, 24, 24))
+    first_upload_response = create_upload_intent(
+        client,
+        headers,
+        draft_id=draft["id"],
+        file_size=len(first_image_bytes),
+        sha256=sha256_hex(first_image_bytes),
+    )
+    upload_to_fake_storage(
+        fake_storage_client,
+        upload_response=first_upload_response.json(),
+        content=first_image_bytes,
+    )
+    first_complete = complete_upload(
+        client,
+        headers,
+        draft_id=draft["id"],
+        upload_intent_id=first_upload_response.json()["upload_intent_id"],
+        idempotency_key="complete-key-multi-1",
+    )
+    assert first_complete.status_code == 200
+
+    second_image_bytes = build_image_bytes(color=(220, 220, 220))
+    second_upload_response = create_upload_intent(
+        client,
+        headers,
+        draft_id=draft["id"],
+        file_size=len(second_image_bytes),
+        sha256=sha256_hex(second_image_bytes),
+    )
+    upload_to_fake_storage(
+        fake_storage_client,
+        upload_response=second_upload_response.json(),
+        content=second_image_bytes,
+    )
+
+    second_complete = complete_upload(
+        client,
+        headers,
+        draft_id=draft["id"],
+        upload_intent_id=second_upload_response.json()["upload_intent_id"],
+        idempotency_key="complete-key-multi-2",
+    )
+
+    assert second_complete.status_code == 200
+    body = second_complete.json()
+    assert len(body["original_images"]) == 2
+    assert sum(1 for image in body["original_images"] if image["is_primary"]) == 1
+    assert [image["position"] for image in body["original_images"]] == [0, 1]
+
+    draft_id = UUID(draft["id"])
+    item = db_session.execute(select(ClosetItem).where(ClosetItem.id == draft_id)).scalar_one()
+    item_images = list(
+        db_session.execute(
+            select(ClosetItemImage)
+            .where(ClosetItemImage.closet_item_id == draft_id)
+            .order_by(ClosetItemImage.position.asc(), ClosetItemImage.id.asc())
+        ).scalars()
+    )
+    processing_runs = list(
+        db_session.execute(
+            select(ProcessingRun).where(ProcessingRun.closet_item_id == draft_id)
+        ).scalars()
+    )
+    jobs = list(
+        db_session.execute(select(ClosetJob).where(ClosetJob.closet_item_id == draft_id)).scalars()
+    )
+
+    assert len(item_images) == 2
+    assert item.primary_image_id == item_images[0].id
+    assert [item_image.position for item_image in item_images] == [0, 1]
+    assert len(processing_runs) == 2
+    assert all(run.run_type == ProcessingRunType.UPLOAD_VALIDATION for run in processing_runs)
     assert len(jobs) == 1
     assert jobs[0].job_kind == ProcessingRunType.IMAGE_PROCESSING
 

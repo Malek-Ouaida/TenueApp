@@ -50,6 +50,7 @@ class ClosetDraftSnapshot(BaseModel):
     review_status: str
     failure_summary: str | None
     has_primary_image: bool
+    original_images: list["ClosetProcessingImageSnapshot"]
     created_at: datetime
     updated_at: datetime
 
@@ -110,7 +111,10 @@ class ClosetReviewListResponse(BaseModel):
 
 class ClosetProcessingImageSnapshot(BaseModel):
     asset_id: UUID
+    image_id: UUID | None = None
     role: str
+    position: int | None = None
+    is_primary: bool = False
     mime_type: str
     width: int | None
     height: int | None
@@ -150,6 +154,7 @@ class ClosetProcessingSnapshot(BaseModel):
     provider_results: list[ClosetProviderResultSnapshot]
     display_image: ClosetProcessingImageSnapshot | None
     original_image: ClosetProcessingImageSnapshot | None
+    original_images: list[ClosetProcessingImageSnapshot]
     thumbnail_image: ClosetProcessingImageSnapshot | None
 
 
@@ -285,6 +290,7 @@ class ClosetItemDetailSnapshot(BaseModel):
     display_image: ClosetProcessingImageSnapshot | None
     thumbnail_image: ClosetProcessingImageSnapshot | None
     original_image: ClosetProcessingImageSnapshot | None
+    original_images: list[ClosetProcessingImageSnapshot]
     metadata_projection: ClosetMetadataProjectionSnapshot
     field_states: list[ClosetFieldStateSnapshot]
 
@@ -331,6 +337,7 @@ class ClosetItemReviewSnapshot(BaseModel):
     latest_normalization_run: ClosetProcessingRunSnapshot | None
     display_image: ClosetProcessingImageSnapshot | None
     original_image: ClosetProcessingImageSnapshot | None
+    original_images: list[ClosetProcessingImageSnapshot]
     thumbnail_image: ClosetProcessingImageSnapshot | None
     review_fields: list[ClosetReviewFieldSnapshot]
     current_candidate_set: ClosetExtractionCurrentCandidateSet | None
@@ -389,3 +396,17 @@ class ClosetRetryRequest(BaseModel):
         ]
         | None
     ) = None
+
+
+class ClosetHistoryEventSnapshot(BaseModel):
+    id: UUID
+    actor_user_id: UUID | None
+    actor_type: str
+    event_type: str
+    payload: Any
+    created_at: datetime
+
+
+class ClosetHistoryResponse(BaseModel):
+    items: list[ClosetHistoryEventSnapshot]
+    next_cursor: str | None

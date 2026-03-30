@@ -32,10 +32,11 @@ class ClosetWorker:
 
         handler = self.handlers.get(job.job_kind)
         if handler is None:
-            self.repository.mark_job_failed(
+            self.repository.handle_job_failure(
                 job=job,
                 error_code=UNSUPPORTED_JOB_HANDLER,
                 error_detail=f"No handler registered for {job.job_kind.value}.",
+                retryable=False,
             )
             self.session.commit()
             return job
@@ -43,10 +44,11 @@ class ClosetWorker:
         try:
             handler(self.session, job)
         except Exception as exc:
-            self.repository.mark_job_failed(
+            self.repository.handle_job_failure(
                 job=job,
                 error_code=exc.code if isinstance(exc, ClosetDomainError) else "job_handler_failed",
                 error_detail=exc.detail if isinstance(exc, ClosetDomainError) else str(exc),
+                retryable=not isinstance(exc, ClosetDomainError),
             )
             self.session.commit()
             return job

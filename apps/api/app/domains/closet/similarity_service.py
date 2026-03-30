@@ -524,9 +524,18 @@ class ClosetSimilarityService:
             material=other_projection.material,
             pattern=other_projection.pattern,
             brand=other_projection.brand,
-            display_image=self._build_preview_image(images_by_role.get(ClosetItemImageRole.PROCESSED))
-            or self._build_preview_image(images_by_role.get(ClosetItemImageRole.ORIGINAL)),
-            thumbnail_image=self._build_preview_image(images_by_role.get(ClosetItemImageRole.THUMBNAIL)),
+            display_image=self._build_preview_image(
+                images_by_role.get(ClosetItemImageRole.PROCESSED),
+                primary_image_id=other_item.primary_image_id,
+            )
+            or self._build_preview_image(
+                images_by_role.get(ClosetItemImageRole.ORIGINAL),
+                primary_image_id=other_item.primary_image_id,
+            ),
+            thumbnail_image=self._build_preview_image(
+                images_by_role.get(ClosetItemImageRole.THUMBNAIL),
+                primary_image_id=other_item.primary_image_id,
+            ),
         )
         edge_snapshot = self._build_edge_snapshot(edge=edge)
         return SimilarityListItemSnapshot(
@@ -571,6 +580,8 @@ class ClosetSimilarityService:
     def _build_preview_image(
         self,
         image_record: tuple[ClosetItemImage, MediaAsset] | None,
+        *,
+        primary_image_id: UUID | None = None,
     ) -> ProcessingSnapshotImage | None:
         if image_record is None:
             return None
@@ -582,7 +593,14 @@ class ClosetSimilarityService:
         )
         return ProcessingSnapshotImage(
             asset_id=asset.id,
+            image_id=item_image.id,
             role=item_image.role.value,
+            position=(
+                item_image.position
+                if item_image.role == ClosetItemImageRole.ORIGINAL
+                else None
+            ),
+            is_primary=primary_image_id == item_image.id,
             mime_type=asset.mime_type,
             width=asset.width,
             height=asset.height,

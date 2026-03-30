@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -17,6 +19,7 @@ from app.domains.closet.models import (
     ApplicabilityState,
     AuditActorType,
     ClosetItem,
+    ClosetItemAuditEvent,
     ClosetItemFieldState,
     ClosetItemImageRole,
     FieldReviewState,
@@ -357,6 +360,30 @@ class ClosetLifecycleService:
         )
         self.session.commit()
 
+    def list_item_history(
+        self,
+        *,
+        item_id: UUID,
+        user_id: UUID,
+        cursor: str | None,
+        limit: int,
+    ) -> tuple[list[ClosetItemAuditEvent], str | None]:
+        item = self.repository.require_item_for_user(item_id=item_id, user_id=user_id)
+        cursor_created_at, cursor_event_id = decode_history_cursor(cursor)
+        events = self.repository.list_audit_events_paginated(
+            closet_item_id=item.id,
+            cursor_created_at=cursor_created_at,
+            cursor_event_id=cursor_event_id,
+            limit=limit + 1,
+        )
+        has_more = len(events) > limit
+        visible_events = events[:limit]
+        next_cursor = None
+        if has_more and visible_events:
+            last_event = visible_events[-1]
+            next_cursor = encode_history_cursor(last_event.created_at, last_event.id)
+        return visible_events, next_cursor
+
     def _ensure_not_archived(self, item: ClosetItem) -> None:
         if item.lifecycle_status == LifecycleStatus.ARCHIVED:
             raise build_error(INVALID_LIFECYCLE_TRANSITION, detail="Archived items are immutable.")
@@ -383,3 +410,24 @@ class ClosetLifecycleService:
             for field_name in REQUIRED_CONFIRMATION_FIELDS
             if not is_confirmed_field_state(field_states.get(field_name))
         }
+
+
+class InvalidHistoryCursorError(ValueError):
+    pass
+
+
+def encode_history_cursor(created_at: datetime, event_id: UUID) -> str:
+    payload = f"{created_at.isoformat()}|{event_id}"
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("utf-8")
+
+
+def decode_history_cursor(cursor: str | None) -> tuple[datetime | None, UUID | None]:
+    if cursor is None:
+        return None, None
+
+    try:
+        decoded = base64.urlsafe_b64decode(cursor.encode("utf-8")).decode("utf-8")
+        created_at_raw, event_id_raw = decoded.split("|", 1)
+        return datetime.fromisoformat(created_at_raw), UUID(event_id_raw)
+    except Exception as exc:
+        raise InvalidHistoryCursorError("Invalid history cursor.") from exc

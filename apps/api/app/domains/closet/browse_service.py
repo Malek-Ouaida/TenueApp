@@ -60,6 +60,7 @@ class BrowseDetailSnapshot:
     display_image: ProcessingSnapshotImage | None
     thumbnail_image: ProcessingSnapshotImage | None
     original_image: ProcessingSnapshotImage | None
+    original_images: list[ProcessingSnapshotImage]
     metadata_projection: ClosetItemMetadataProjection
     field_states: list[ClosetItemFieldState]
 
@@ -172,8 +173,10 @@ class ClosetBrowseService:
             self.repository.list_field_states(closet_item_id=item.id)
         )
         original_image = self._build_image_snapshot(
-            self.repository.get_primary_image_asset(item=item)
+            self.repository.get_primary_image_asset(item=item),
+            primary_image_id=item.primary_image_id,
         )
+        original_images = self._build_original_image_snapshots(item=item)
         processed_image = self._build_image_snapshot(
             self.repository.get_active_image_asset_by_role(
                 closet_item_id=item.id,
@@ -199,6 +202,7 @@ class ClosetBrowseService:
             display_image=processed_image or original_image,
             thumbnail_image=thumbnail_image,
             original_image=original_image,
+            original_images=original_images,
             metadata_projection=projection,
             field_states=field_states,
         )
@@ -323,9 +327,27 @@ class ClosetBrowseService:
             thumbnail_image=thumbnail_image,
         )
 
+    def _build_original_image_snapshots(self, *, item: object) -> list[ProcessingSnapshotImage]:
+        item_id = getattr(item, "id")
+        primary_image_id = getattr(item, "primary_image_id", None)
+        snapshots: list[ProcessingSnapshotImage] = []
+        for image_record in self.repository.list_active_image_assets_for_item(
+            closet_item_id=item_id,
+            role=ClosetItemImageRole.ORIGINAL,
+        ):
+            snapshot = self._build_image_snapshot(
+                image_record,
+                primary_image_id=primary_image_id,
+            )
+            if snapshot is not None:
+                snapshots.append(snapshot)
+        return snapshots
+
     def _build_image_snapshot(
         self,
         image_record: tuple[ClosetItemImage, MediaAsset] | None,
+        *,
+        primary_image_id: UUID | None = None,
     ) -> ProcessingSnapshotImage | None:
         if image_record is None:
             return None
@@ -337,7 +359,14 @@ class ClosetBrowseService:
         )
         return ProcessingSnapshotImage(
             asset_id=asset.id,
+            image_id=item_image.id,
             role=item_image.role.value,
+            position=(
+                item_image.position
+                if item_image.role == ClosetItemImageRole.ORIGINAL
+                else None
+            ),
+            is_primary=primary_image_id == item_image.id,
             mime_type=asset.mime_type,
             width=asset.width,
             height=asset.height,

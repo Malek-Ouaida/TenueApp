@@ -57,7 +57,10 @@ IMAGE_PROCESSING_FAILURE_SUMMARY = (
 @dataclass(frozen=True)
 class ProcessingSnapshotImage:
     asset_id: UUID
+    image_id: UUID | None
     role: str
+    position: int | None
+    is_primary: bool
     mime_type: str
     width: int | None
     height: int | None
@@ -100,6 +103,7 @@ class ProcessingSnapshot:
     provider_results: list[ProcessingSnapshotProviderResult]
     display_image: ProcessingSnapshotImage | None
     original_image: ProcessingSnapshotImage | None
+    original_images: list[ProcessingSnapshotImage]
     thumbnail_image: ProcessingSnapshotImage | None
 
 
@@ -177,8 +181,10 @@ class ClosetImageProcessingService:
         )
 
         original_image = self._build_image_snapshot(
-            self.repository.get_primary_image_asset(item=item)
+            self.repository.get_primary_image_asset(item=item),
+            primary_image_id=item.primary_image_id,
         )
+        original_images = self._build_original_image_snapshots(item=item)
         processed_image = self._build_image_snapshot(
             self.repository.get_active_image_asset_by_role(
                 closet_item_id=item.id,
@@ -215,6 +221,7 @@ class ClosetImageProcessingService:
             ],
             display_image=processed_image or original_image,
             original_image=original_image,
+            original_images=original_images,
             thumbnail_image=thumbnail_image,
         )
 
@@ -479,9 +486,25 @@ class ClosetImageProcessingService:
                 mime_type=None,
             )
 
+    def _build_original_image_snapshots(self, *, item: ClosetItem) -> list[ProcessingSnapshotImage]:
+        snapshots: list[ProcessingSnapshotImage] = []
+        for image_record in self.repository.list_active_image_assets_for_item(
+            closet_item_id=item.id,
+            role=ClosetItemImageRole.ORIGINAL,
+        ):
+            snapshot = self._build_image_snapshot(
+                image_record,
+                primary_image_id=item.primary_image_id,
+            )
+            if snapshot is not None:
+                snapshots.append(snapshot)
+        return snapshots
+
     def _build_image_snapshot(
         self,
         image_record: tuple[ClosetItemImage, MediaAsset] | None,
+        *,
+        primary_image_id: UUID | None = None,
     ) -> ProcessingSnapshotImage | None:
         if image_record is None:
             return None
@@ -493,7 +516,14 @@ class ClosetImageProcessingService:
         )
         return ProcessingSnapshotImage(
             asset_id=asset.id,
+            image_id=item_image.id,
             role=item_image.role.value,
+            position=(
+                item_image.position
+                if item_image.role == ClosetItemImageRole.ORIGINAL
+                else None
+            ),
+            is_primary=primary_image_id == item_image.id,
             mime_type=asset.mime_type,
             width=asset.width,
             height=asset.height,
