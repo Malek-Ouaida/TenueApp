@@ -7,6 +7,7 @@ from app.api.dependencies.auth import CurrentUser
 from app.api.dependencies.closet import (
     get_closet_browse_service,
     get_closet_image_processing_service,
+    get_closet_lifecycle_service,
     get_closet_metadata_extraction_service,
     get_closet_review_service,
     get_closet_upload_service,
@@ -21,6 +22,8 @@ from app.api.schemas.closet import (
     ClosetExtractionSnapshot,
     ClosetFieldCandidateSnapshot,
     ClosetFieldStateSnapshot,
+    ClosetHistoryEventSnapshot,
+    ClosetHistoryResponse,
     ClosetItemDetailSnapshot,
     ClosetItemReviewSnapshot,
     ClosetMetadataOptionsResponse,
@@ -57,6 +60,10 @@ from app.domains.closet.metadata_extraction_service import (
     ExtractionSnapshot,
 )
 from app.domains.closet.review_service import ClosetReviewService, ReviewSnapshot
+from app.domains.closet.service import (
+    ClosetLifecycleService,
+    InvalidHistoryCursorError,
+)
 from app.domains.closet.taxonomy import build_metadata_options
 from app.domains.closet.upload_service import ClosetDraftUploadService, InvalidReviewCursorError
 
@@ -87,7 +94,10 @@ def create_draft(
         raise _http_error(exc) from exc
 
     response.status_code = status_code
-    return build_draft_snapshot(item)
+    return build_draft_snapshot(
+        item,
+        upload_service.list_original_images(item_id=item.id, user_id=current_user.id),
+    )
 
 
 @router.get("/drafts/{item_id}", response_model=ClosetDraftSnapshot)
@@ -101,7 +111,10 @@ def read_draft(
     except ClosetDomainError as exc:
         raise _http_error(exc) from exc
 
-    return build_draft_snapshot(item)
+    return build_draft_snapshot(
+        item,
+        upload_service.list_original_images(item_id=item.id, user_id=current_user.id),
+    )
 
 
 @router.post("/drafts/{item_id}/upload-intents", response_model=ClosetUploadIntentResponse)
@@ -154,7 +167,10 @@ def complete_upload(
         raise _http_error(exc) from exc
 
     response.status_code = status_code
-    return build_draft_snapshot(item)
+    return build_draft_snapshot(
+        item,
+        upload_service.list_original_images(item_id=item.id, user_id=current_user.id),
+    )
 
 
 @router.get("/review", response_model=ClosetReviewListResponse)
@@ -174,7 +190,13 @@ def read_review_queue(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return ClosetReviewListResponse(
-        items=[build_draft_snapshot(item) for item in items],
+        items=[
+            build_draft_snapshot(
+                item,
+                upload_service.list_original_images(item_id=item.id, user_id=current_user.id),
+            )
+            for item in items
+        ],
         next_cursor=next_cursor,
     )
 
@@ -228,6 +250,42 @@ def read_confirmed_item_detail(
         raise _http_error(exc) from exc
 
     return build_item_detail_snapshot(snapshot)
+
+
+@router.get("/items/{item_id}/history", response_model=ClosetHistoryResponse)
+def read_item_history(
+    item_id: UUID,
+    current_user: CurrentUser,
+    lifecycle_service: Annotated[ClosetLifecycleService, Depends(get_closet_lifecycle_service)],
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> ClosetHistoryResponse:
+    try:
+        items, next_cursor = lifecycle_service.list_item_history(
+            item_id=item_id,
+            user_id=current_user.id,
+            cursor=cursor,
+            limit=limit,
+        )
+    except InvalidHistoryCursorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return ClosetHistoryResponse(
+        items=[
+            ClosetHistoryEventSnapshot(
+                id=getattr(event, "id"),
+                actor_user_id=getattr(event, "actor_user_id"),
+                actor_type=_enum_str(getattr(event, "actor_type")),
+                event_type=getattr(event, "event_type"),
+                payload=getattr(event, "payload"),
+                created_at=getattr(event, "created_at"),
+            )
+            for event in items
+        ],
+        next_cursor=next_cursor,
+    )
 
 
 @router.get("/items/{item_id}/processing", response_model=ClosetProcessingSnapshot)
@@ -347,6 +405,20 @@ def confirm_item_review(
     return build_review_snapshot(snapshot)
 
 
+@router.post("/items/{item_id}/archive", status_code=204)
+def archive_item(
+    item_id: UUID,
+    current_user: CurrentUser,
+    lifecycle_service: Annotated[ClosetLifecycleService, Depends(get_closet_lifecycle_service)],
+) -> Response:
+    try:
+        lifecycle_service.archive_item(item_id=item_id, user_id=current_user.id)
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return Response(status_code=204)
+
+
 @router.post("/items/{item_id}/retry", response_model=ClosetItemReviewSnapshot, status_code=202)
 def retry_item_review(
     item_id: UUID,
@@ -391,7 +463,7 @@ def reextract_item_metadata(
     return build_extraction_snapshot(snapshot)
 
 
-def build_draft_snapshot(item: object) -> ClosetDraftSnapshot:
+def build_draft_snapshot(item: object, original_images: list[object]) -> ClosetDraftSnapshot:
     item_id = getattr(item, "id")
     title = getattr(item, "title")
     lifecycle_status = getattr(item, "lifecycle_status").value
@@ -409,6 +481,7 @@ def build_draft_snapshot(item: object) -> ClosetDraftSnapshot:
         review_status=review_status,
         failure_summary=failure_summary,
         has_primary_image=has_primary_image,
+        original_images=[_build_image_payload(image) for image in original_images],
         created_at=created_at,
         updated_at=updated_at,
     )
@@ -419,7 +492,10 @@ def _build_image_payload(image: object | None) -> ClosetProcessingImageSnapshot 
         return None
     return ClosetProcessingImageSnapshot(
         asset_id=getattr(image, "asset_id"),
+        image_id=getattr(image, "image_id", None),
         role=getattr(image, "role"),
+        position=getattr(image, "position", None),
+        is_primary=getattr(image, "is_primary", False),
         mime_type=getattr(image, "mime_type"),
         width=getattr(image, "width"),
         height=getattr(image, "height"),
@@ -539,6 +615,9 @@ def build_item_detail_snapshot(snapshot: BrowseDetailSnapshot) -> ClosetItemDeta
         display_image=_build_image_payload(getattr(snapshot, "display_image")),
         thumbnail_image=_build_image_payload(getattr(snapshot, "thumbnail_image")),
         original_image=_build_image_payload(getattr(snapshot, "original_image")),
+        original_images=[
+            _build_image_payload(image) for image in getattr(snapshot, "original_images")
+        ],
         metadata_projection=_build_metadata_projection_payload(
             getattr(snapshot, "metadata_projection")
         ),
@@ -573,6 +652,9 @@ def build_processing_snapshot(snapshot: ProcessingSnapshot) -> ClosetProcessingS
         ],
         display_image=_build_image_payload(getattr(snapshot, "display_image")),
         original_image=_build_image_payload(getattr(snapshot, "original_image")),
+        original_images=[
+            _build_image_payload(image) for image in getattr(snapshot, "original_images")
+        ],
         thumbnail_image=_build_image_payload(getattr(snapshot, "thumbnail_image")),
     )
 
@@ -639,6 +721,9 @@ def build_review_snapshot(snapshot: ReviewSnapshot) -> ClosetItemReviewSnapshot:
         latest_normalization_run=_build_run_payload(getattr(snapshot, "latest_normalization_run")),
         display_image=_build_image_payload(getattr(snapshot, "display_image")),
         original_image=_build_image_payload(getattr(snapshot, "original_image")),
+        original_images=[
+            _build_image_payload(image) for image in getattr(snapshot, "original_images")
+        ],
         thumbnail_image=_build_image_payload(getattr(snapshot, "thumbnail_image")),
         review_fields=[
             ClosetReviewFieldSnapshot(

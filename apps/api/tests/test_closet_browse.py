@@ -758,6 +758,80 @@ def test_detail_returns_signed_images_and_ordered_field_states(
     assert field_names.index("colors") < field_names.index("brand")
 
 
+def test_detail_includes_all_original_images_for_confirmed_items(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: InMemoryStorageClient,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+) -> None:
+    headers, item_id = create_normalized_review_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        raw_fields={
+            "category": {"value": "top", "confidence": 0.98, "applicability_state": "value"},
+            "subcategory": {
+                "value": "tee shirt",
+                "confidence": 0.97,
+                "applicability_state": "value",
+            },
+        },
+        email="browse-detail-multi@example.com",
+        title="Multi image tee",
+    )
+    extra_image_bytes = build_image_bytes(color=(220, 220, 220))
+    upload_response = create_upload_intent(
+        client,
+        headers,
+        draft_id=str(item_id),
+        filename="tee-back.jpg",
+        mime_type="image/jpeg",
+        file_size=len(extra_image_bytes),
+        sha256=sha256_hex(extra_image_bytes),
+    )
+    assert upload_response.status_code == 200
+    upload_to_fake_storage(
+        fake_storage_client,
+        upload_response=upload_response.json(),
+        content=extra_image_bytes,
+    )
+    complete_response = complete_upload(
+        client,
+        headers,
+        draft_id=str(item_id),
+        upload_intent_id=upload_response.json()["upload_intent_id"],
+        idempotency_key="detail-multi-extra-complete",
+    )
+    assert complete_response.status_code == 200
+    assert len(complete_response.json()["original_images"]) == 2
+
+    confirm_item_with_changes(
+        client,
+        headers,
+        item_id=item_id,
+        changes=[
+            {"field_name": "category", "operation": "accept_suggestion"},
+            {"field_name": "subcategory", "operation": "accept_suggestion"},
+        ],
+    )
+
+    response = client.get(f"/closet/items/{item_id}", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["original_images"]) == 2
+    assert sum(1 for image in body["original_images"] if image["is_primary"]) == 1
+    assert body["original_images"][0]["position"] == 0
+    assert body["original_images"][1]["position"] == 1
+    assert all(
+        image["url"].startswith("https://fake-storage.local/download/")
+        for image in body["original_images"]
+    )
+
+
 def test_detail_falls_back_to_original_when_no_processed_asset_exists(
     client: TestClient,
     db_session: Session,
@@ -855,3 +929,61 @@ def test_confirmed_item_from_existing_review_flow_is_immediately_browsable(
     assert [item["item_id"] for item in list_response.json()["items"]] == [str(item_id)]
     assert detail_response.status_code == 200
     assert detail_response.json()["metadata_projection"]["material"] == "suede"
+
+
+def test_archive_endpoint_hides_item_from_browse_and_history_is_paginated(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: InMemoryStorageClient,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+) -> None:
+    headers, item_id = create_normalized_review_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        raw_fields={
+            "category": {"value": "outerwear", "confidence": 0.98, "applicability_state": "value"},
+            "subcategory": {
+                "value": "jacket",
+                "confidence": 0.97,
+                "applicability_state": "value",
+            },
+        },
+        email="browse-archive-history@example.com",
+        title="Archive jacket",
+    )
+    confirm_item_with_changes(
+        client,
+        headers,
+        item_id=item_id,
+        changes=[
+            {"field_name": "category", "operation": "accept_suggestion"},
+            {"field_name": "subcategory", "operation": "accept_suggestion"},
+        ],
+    )
+
+    archive_response = client.post(f"/closet/items/{item_id}/archive", headers=headers)
+    list_response = client.get("/closet/items", headers=headers)
+    detail_response = client.get(f"/closet/items/{item_id}", headers=headers)
+    history_page_one = client.get(f"/closet/items/{item_id}/history?limit=2", headers=headers)
+
+    assert archive_response.status_code == 204
+    assert str(item_id) not in {item["item_id"] for item in list_response.json()["items"]}
+    assert detail_response.status_code == 404
+    assert history_page_one.status_code == 200
+    assert history_page_one.json()["items"][0]["event_type"] == "item_archived"
+    assert history_page_one.json()["next_cursor"] is not None
+
+    history_page_two = client.get(
+        f"/closet/items/{item_id}/history?limit=2&cursor={history_page_one.json()['next_cursor']}",
+        headers=headers,
+    )
+
+    assert history_page_two.status_code == 200
+    page_one_ids = [event["id"] for event in history_page_one.json()["items"]]
+    page_two_ids = [event["id"] for event in history_page_two.json()["items"]]
+    assert set(page_one_ids).isdisjoint(page_two_ids)
+    assert history_page_two.json()["items"]

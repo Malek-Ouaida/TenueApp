@@ -33,6 +33,9 @@ class Settings:
     minio_region: str
     closet_media_download_ttl_seconds: int
     closet_thumbnail_max_edge: int
+    closet_job_lock_timeout_seconds: int
+    closet_job_retry_base_delay_seconds: int
+    closet_job_retry_max_delay_seconds: int
     closet_background_removal_provider: str
     photoroom_api_key: str
     photoroom_base_url: str
@@ -75,6 +78,15 @@ def load_settings() -> Settings:
             os.getenv("CLOSET_MEDIA_DOWNLOAD_TTL_SECONDS", "300")
         ),
         closet_thumbnail_max_edge=int(os.getenv("CLOSET_THUMBNAIL_MAX_EDGE", "512")),
+        closet_job_lock_timeout_seconds=int(
+            os.getenv("CLOSET_JOB_LOCK_TIMEOUT_SECONDS", "900")
+        ),
+        closet_job_retry_base_delay_seconds=int(
+            os.getenv("CLOSET_JOB_RETRY_BASE_DELAY_SECONDS", "30")
+        ),
+        closet_job_retry_max_delay_seconds=int(
+            os.getenv("CLOSET_JOB_RETRY_MAX_DELAY_SECONDS", "900")
+        ),
         closet_background_removal_provider=os.getenv(
             "CLOSET_BACKGROUND_REMOVAL_PROVIDER",
             "disabled",

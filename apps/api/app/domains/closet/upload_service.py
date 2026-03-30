@@ -23,7 +23,6 @@ from app.core.storage import ObjectStorageClient, PresignedUpload
 from app.domains.closet.errors import (
     CLOSET_ITEM_NOT_FOUND,
     IDEMPOTENCY_CONFLICT,
-    INVALID_LIFECYCLE_TRANSITION,
     UNSUPPORTED_UPLOAD_MIME_TYPE,
     UPLOAD_ALREADY_FINALIZED,
     UPLOAD_CHECKSUM_MISMATCH,
@@ -35,13 +34,18 @@ from app.domains.closet.errors import (
     UPLOAD_VALIDATION_FAILED,
     build_error,
 )
-from app.domains.closet.image_processing_service import ClosetImageProcessingService
+from app.domains.closet.image_processing_service import (
+    ClosetImageProcessingService,
+    ProcessingSnapshotImage,
+)
 from app.domains.closet.models import (
     AuditActorType,
     ClosetItem,
+    ClosetItemImage,
     ClosetItemImageRole,
     ClosetUploadIntent,
     LifecycleStatus,
+    MediaAsset,
     MediaAssetSourceKind,
     ProcessingRunType,
     ProcessingStatus,
@@ -149,11 +153,6 @@ class ClosetDraftUploadService:
         sha256: str,
     ) -> UploadIntentResult:
         item = self.get_draft(item_id=item_id, user_id=user_id)
-        if self.repository.has_active_primary_image(item=item) or item.primary_image_id is not None:
-            raise build_error(
-                INVALID_LIFECYCLE_TRANSITION,
-                detail="This draft already has a primary image.",
-            )
         self._validate_upload_metadata(mime_type=mime_type, file_size=file_size)
 
         now = utcnow()
@@ -239,12 +238,6 @@ class ClosetDraftUploadService:
                 detail=upload_intent.last_error_detail
                 or "The upload intent has already failed validation.",
             )
-        if self.repository.has_active_primary_image(item=item) or item.primary_image_id is not None:
-            raise build_error(
-                INVALID_LIFECYCLE_TRANSITION,
-                detail="This draft already has a primary image.",
-            )
-
         try:
             validated_upload = self._validate_uploaded_object(upload_intent)
         except Exception as exc:
@@ -279,6 +272,7 @@ class ClosetDraftUploadService:
             raise build_error(UPLOAD_NOT_PRESENT, detail=detail) from exc
 
         try:
+            had_primary_image = self.repository.has_active_primary_image(item=item)
             media_asset = self.repository.create_media_asset(
                 asset_id=asset_id,
                 user_id=user_id,
@@ -296,8 +290,13 @@ class ClosetDraftUploadService:
                 closet_item_id=item.id,
                 asset_id=media_asset.id,
                 role=ClosetItemImageRole.ORIGINAL,
+                position=self.repository.get_next_image_position(
+                    closet_item_id=item.id,
+                    role=ClosetItemImageRole.ORIGINAL,
+                ),
             )
-            item.primary_image_id = item_image.id
+            if not had_primary_image:
+                item.primary_image_id = item_image.id
             item.failure_summary = None
             self._recompute_review_status(item)
             self.repository.mark_upload_intent_finalized(
@@ -311,6 +310,9 @@ class ClosetDraftUploadService:
                 event_type="upload_finalized",
                 payload={
                     "asset_id": str(media_asset.id),
+                    "image_id": str(item_image.id),
+                    "position": item_image.position,
+                    "is_primary": item.primary_image_id == item_image.id,
                     "upload_intent_id": str(upload_intent.id),
                 },
             )
@@ -321,12 +323,13 @@ class ClosetDraftUploadService:
                 started_at=now,
                 completed_at=now,
             )
-            self.image_processing_service.enqueue_processing_for_item(
-                item=item,
-                actor_type=AuditActorType.USER,
-                actor_user_id=user_id,
-                raise_on_duplicate=False,
-            )
+            if not had_primary_image:
+                self.image_processing_service.enqueue_processing_for_item(
+                    item=item,
+                    actor_type=AuditActorType.USER,
+                    actor_user_id=user_id,
+                    raise_on_duplicate=False,
+                )
             self.repository.create_idempotency_record(
                 user_id=user_id,
                 operation=COMPLETE_UPLOAD_OPERATION,
@@ -352,6 +355,21 @@ class ClosetDraftUploadService:
 
         self.session.refresh(item)
         return item, 200
+
+    def list_original_images(
+        self,
+        *,
+        item_id: UUID,
+        user_id: UUID,
+    ) -> list[ProcessingSnapshotImage]:
+        item = self.repository.require_item_for_user(item_id=item_id, user_id=user_id)
+        return [
+            self._build_image_snapshot(image_record, primary_image_id=item.primary_image_id)
+            for image_record in self.repository.list_active_image_assets_for_item(
+                closet_item_id=item.id,
+                role=ClosetItemImageRole.ORIGINAL,
+            )
+        ]
 
     def list_review_items(
         self,
@@ -417,6 +435,35 @@ class ClosetDraftUploadService:
         )
         item.failure_summary = error_detail
         self.session.commit()
+
+    def _build_image_snapshot(
+        self,
+        image_record: tuple[ClosetItemImage, MediaAsset],
+        *,
+        primary_image_id: UUID | None,
+    ) -> ProcessingSnapshotImage:
+        item_image, asset = image_record
+        presigned_download = self.storage.generate_presigned_download(
+            bucket=asset.bucket,
+            key=asset.key,
+            expires_in_seconds=settings.closet_media_download_ttl_seconds,
+        )
+        return ProcessingSnapshotImage(
+            asset_id=asset.id,
+            image_id=item_image.id,
+            role=item_image.role.value,
+            position=(
+                item_image.position
+                if item_image.role == ClosetItemImageRole.ORIGINAL
+                else None
+            ),
+            is_primary=primary_image_id == item_image.id,
+            mime_type=asset.mime_type,
+            width=asset.width,
+            height=asset.height,
+            url=presigned_download.url,
+            expires_at=presigned_download.expires_at,
+        )
 
     def _ensure_matching_idempotency(
         self,

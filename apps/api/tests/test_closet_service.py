@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.domains.auth.models import User
 from app.domains.closet.errors import (
     INVALID_LIFECYCLE_TRANSITION,
@@ -27,6 +28,7 @@ from app.domains.closet.models import (
 from app.domains.closet.repository import ClosetJobRepository, ClosetRepository
 from app.domains.closet.service import ClosetLifecycleService
 from app.domains.closet.taxonomy import TAXONOMY_VERSION
+from app.domains.closet.worker import ClosetWorker
 
 
 def create_user(session: Session, *, email: str = "closet-owner@example.com") -> User:
@@ -43,6 +45,10 @@ def create_user(session: Session, *, email: str = "closet-owner@example.com") ->
 
 def create_service(session: Session) -> ClosetLifecycleService:
     return ClosetLifecycleService(session=session, repository=ClosetRepository(session))
+
+
+def normalize_test_datetime(value: datetime) -> datetime:
+    return value if value.tzinfo is None else value.astimezone(UTC).replace(tzinfo=None)
 
 
 def create_ready_for_review_item(
@@ -301,3 +307,101 @@ def test_confirm_and_archive_record_audit_events(db_session: Session) -> None:
     archive_event = next(event for event in events if event.event_type == "item_archived")
     assert confirm_event.actor_type == AuditActorType.USER
     assert archive_event.actor_type == AuditActorType.USER
+
+
+def test_release_job_for_retry_applies_exponential_backoff(db_session: Session) -> None:
+    user = create_user(db_session, email="job-retry-backoff@example.com")
+    service = create_service(db_session)
+    item = service.create_item(user_id=user.id)
+    repository = ClosetJobRepository(db_session)
+    now = datetime.now(UTC)
+    job = repository.enqueue_job(
+        closet_item_id=item.id,
+        job_kind=ProcessingRunType.IMAGE_PROCESSING,
+        available_at=now - timedelta(minutes=1),
+        max_attempts=4,
+    )
+    repository.mark_job_running(job=job, worker_name="worker-1", now=now)
+
+    retried_job = repository.release_job_for_retry(
+        job=job,
+        error_code="job_handler_failed",
+        error_detail="boom",
+        now=now,
+    )
+
+    assert retried_job.status == ClosetJobStatus.PENDING
+    assert retried_job.locked_at is None
+    assert retried_job.locked_by is None
+    assert retried_job.last_error_code == "job_handler_failed"
+    assert retried_job.last_error_detail == "boom"
+    assert (
+        normalize_test_datetime(retried_job.available_at) - normalize_test_datetime(now)
+    ).total_seconds() == settings.closet_job_retry_base_delay_seconds
+
+
+def test_claim_next_job_reclaims_stale_running_jobs(db_session: Session) -> None:
+    user = create_user(db_session, email="job-retry-stale@example.com")
+    service = create_service(db_session)
+    item = service.create_item(user_id=user.id)
+    repository = ClosetJobRepository(db_session)
+    now = datetime.now(UTC)
+    stale_lock_time = now - timedelta(seconds=settings.closet_job_lock_timeout_seconds + 1)
+    job = repository.enqueue_job(
+        closet_item_id=item.id,
+        job_kind=ProcessingRunType.IMAGE_PROCESSING,
+        available_at=stale_lock_time,
+        max_attempts=3,
+    )
+    repository.mark_job_running(job=job, worker_name="stale-worker", now=stale_lock_time)
+    db_session.commit()
+
+    claimed = repository.claim_next_job(worker_name="worker-2", now=now)
+
+    assert claimed is not None
+    assert claimed.id == job.id
+    assert claimed.status == ClosetJobStatus.RUNNING
+    assert claimed.locked_by == "worker-2"
+    assert claimed.attempt_count == 2
+    assert claimed.last_error_code == "job_lock_expired"
+
+
+def test_worker_retries_unhandled_failures_until_max_attempts(db_session: Session) -> None:
+    user = create_user(db_session, email="job-worker-retry@example.com")
+    service = create_service(db_session)
+    item = service.create_item(user_id=user.id)
+    repository = ClosetJobRepository(db_session)
+    job = repository.enqueue_job(
+        closet_item_id=item.id,
+        job_kind=ProcessingRunType.IMAGE_PROCESSING,
+        max_attempts=2,
+    )
+    db_session.commit()
+
+    def failing_handler(session: Session, claimed_job: object) -> None:
+        del session, claimed_job
+        raise RuntimeError("boom")
+
+    worker = ClosetWorker(
+        session=db_session,
+        handlers={ProcessingRunType.IMAGE_PROCESSING: failing_handler},
+    )
+
+    first_job = worker.run_once(worker_name="worker-1")
+    db_session.refresh(job)
+
+    assert first_job is not None
+    assert job.status == ClosetJobStatus.PENDING
+    assert job.attempt_count == 1
+    assert job.last_error_code == "job_handler_failed"
+
+    job.available_at = normalize_test_datetime(datetime.now(UTC) - timedelta(seconds=1))
+    db_session.commit()
+
+    second_job = worker.run_once(worker_name="worker-1")
+    db_session.refresh(job)
+
+    assert second_job is not None
+    assert job.status == ClosetJobStatus.FAILED
+    assert job.attempt_count == 2
+    assert job.last_error_code == "job_handler_failed"

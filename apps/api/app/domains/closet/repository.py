@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.domains.closet.errors import (
     CLOSET_ITEM_NOT_FOUND,
     JOB_NOT_CLAIMABLE,
@@ -508,6 +509,42 @@ class ClosetRepository:
             return None
         return row[0], row[1]
 
+    def list_active_image_assets_for_item(
+        self,
+        *,
+        closet_item_id: UUID,
+        role: ClosetItemImageRole,
+    ) -> list[tuple[ClosetItemImage, MediaAsset]]:
+        statement = (
+            select(ClosetItemImage, MediaAsset)
+            .join(MediaAsset, MediaAsset.id == ClosetItemImage.asset_id)
+            .where(
+                ClosetItemImage.closet_item_id == closet_item_id,
+                ClosetItemImage.role == role,
+                ClosetItemImage.is_active.is_(True),
+            )
+            .order_by(
+                ClosetItemImage.position.asc(),
+                ClosetItemImage.created_at.asc(),
+                ClosetItemImage.id.asc(),
+            )
+        )
+        return [(row[0], row[1]) for row in self.session.execute(statement).all()]
+
+    def get_next_image_position(
+        self,
+        *,
+        closet_item_id: UUID,
+        role: ClosetItemImageRole,
+    ) -> int:
+        statement = select(func.max(ClosetItemImage.position)).where(
+            ClosetItemImage.closet_item_id == closet_item_id,
+            ClosetItemImage.role == role,
+            ClosetItemImage.is_active.is_(True),
+        )
+        max_position = self.session.execute(statement).scalar_one()
+        return 0 if max_position is None else int(max_position) + 1
+
     def deactivate_active_image_roles(
         self,
         *,
@@ -596,6 +633,36 @@ class ClosetRepository:
             .where(ClosetItemAuditEvent.closet_item_id == closet_item_id)
             .order_by(ClosetItemAuditEvent.created_at.asc(), ClosetItemAuditEvent.id.asc())
         )
+        return list(self.session.execute(statement).scalars())
+
+    def list_audit_events_paginated(
+        self,
+        *,
+        closet_item_id: UUID,
+        cursor_created_at: datetime | None,
+        cursor_event_id: UUID | None,
+        limit: int,
+    ) -> list[ClosetItemAuditEvent]:
+        normalized_cursor_created_at = self._normalize_cursor_datetime(cursor_created_at)
+        statement = select(ClosetItemAuditEvent).where(
+            ClosetItemAuditEvent.closet_item_id == closet_item_id
+        )
+
+        if normalized_cursor_created_at is not None and cursor_event_id is not None:
+            statement = statement.where(
+                or_(
+                    ClosetItemAuditEvent.created_at < normalized_cursor_created_at,
+                    and_(
+                        ClosetItemAuditEvent.created_at == normalized_cursor_created_at,
+                        ClosetItemAuditEvent.id < cursor_event_id,
+                    ),
+                )
+            )
+
+        statement = statement.order_by(
+            ClosetItemAuditEvent.created_at.desc(),
+            ClosetItemAuditEvent.id.desc(),
+        ).limit(limit)
         return list(self.session.execute(statement).scalars())
 
     def upsert_metadata_projection(
@@ -772,6 +839,7 @@ class ClosetRepository:
             .order_by(
                 ClosetItemImage.closet_item_id.asc(),
                 ClosetItemImage.role.asc(),
+                ClosetItemImage.position.asc(),
                 ClosetItemImage.created_at.desc(),
                 ClosetItemImage.id.desc(),
             )
@@ -927,6 +995,7 @@ class ClosetJobRepository:
         now: datetime | None = None,
     ) -> ClosetJob | None:
         current_time = self._normalize_datetime(now or utcnow())
+        self._requeue_stale_running_jobs(now=current_time)
         statement = (
             select(ClosetJob)
             .where(
@@ -983,6 +1052,28 @@ class ClosetJobRepository:
         self.session.flush()
         return job
 
+    def handle_job_failure(
+        self,
+        *,
+        job: ClosetJob,
+        error_code: str,
+        error_detail: str,
+        retryable: bool,
+        now: datetime | None = None,
+    ) -> ClosetJob:
+        if retryable and job.attempt_count < job.max_attempts:
+            return self.release_job_for_retry(
+                job=job,
+                error_code=error_code,
+                error_detail=error_detail,
+                now=now,
+            )
+        return self.mark_job_failed(
+            job=job,
+            error_code=error_code,
+            error_detail=error_detail,
+        )
+
     def release_job_for_retry(
         self,
         *,
@@ -990,18 +1081,57 @@ class ClosetJobRepository:
         available_at: datetime | None = None,
         error_code: str | None = None,
         error_detail: str | None = None,
+        now: datetime | None = None,
     ) -> ClosetJob:
         if job.attempt_count >= job.max_attempts:
             raise build_error(JOB_RETRY_EXHAUSTED)
 
+        current_time = self._normalize_datetime(now or utcnow())
         job.status = ClosetJobStatus.PENDING
-        job.available_at = self._normalize_datetime(available_at or utcnow())
+        job.available_at = self._normalize_datetime(
+            available_at or self._calculate_retry_available_at(job=job, now=current_time)
+        )
         job.locked_at = None
         job.locked_by = None
         job.last_error_code = error_code
         job.last_error_detail = error_detail
         self.session.flush()
         return job
+
+    def _requeue_stale_running_jobs(self, *, now: datetime) -> None:
+        stale_before = now - timedelta(seconds=settings.closet_job_lock_timeout_seconds)
+        statement = (
+            select(ClosetJob)
+            .where(
+                ClosetJob.status == ClosetJobStatus.RUNNING,
+                ClosetJob.locked_at.is_not(None),
+                ClosetJob.locked_at <= stale_before,
+            )
+            .order_by(ClosetJob.locked_at.asc(), ClosetJob.created_at.asc(), ClosetJob.id.asc())
+        )
+        for job in self.session.execute(statement).scalars():
+            if job.attempt_count >= job.max_attempts:
+                self.mark_job_failed(
+                    job=job,
+                    error_code="job_lock_expired",
+                    error_detail=(
+                        "The worker lock expired and the job has exhausted its retry budget."
+                    ),
+                )
+                continue
+            self.release_job_for_retry(
+                job=job,
+                available_at=now,
+                error_code="job_lock_expired",
+                error_detail="The worker lock expired before the job completed.",
+                now=now,
+            )
+
+    def _calculate_retry_available_at(self, *, job: ClosetJob, now: datetime) -> datetime:
+        exponent = max(job.attempt_count - 1, 0)
+        delay_seconds = settings.closet_job_retry_base_delay_seconds * (2**exponent)
+        capped_delay_seconds = min(delay_seconds, settings.closet_job_retry_max_delay_seconds)
+        return now + timedelta(seconds=capped_delay_seconds)
 
     def _normalize_datetime(self, value: datetime) -> datetime:
         dialect_name = self.session.bind.dialect.name if self.session.bind is not None else ""
