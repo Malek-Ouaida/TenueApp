@@ -221,6 +221,41 @@ class ClosetBrowseListResponse(BaseModel):
     next_cursor: str | None
 
 
+class ClosetSimilaritySignalSnapshot(BaseModel):
+    code: str
+    label: str
+    contribution: float
+    metadata: dict[str, Any] | None
+
+
+class ClosetSimilarityEdgeSnapshot(BaseModel):
+    edge_id: UUID
+    item_a_id: UUID
+    item_b_id: UUID
+    label: str
+    similarity_type: str
+    decision_status: str
+    score: float
+    signals: list[ClosetSimilaritySignalSnapshot]
+
+
+class ClosetSimilarityListItemSnapshot(BaseModel):
+    edge_id: UUID
+    label: str
+    similarity_type: str
+    decision_status: str
+    score: float
+    signals: list[ClosetSimilaritySignalSnapshot]
+    other_item: ClosetBrowseListItemSnapshot
+
+
+class ClosetSimilarityListResponse(BaseModel):
+    item_id: UUID
+    similarity_status: str
+    latest_run: ClosetProcessingRunSnapshot | None
+    items: list[ClosetSimilarityListItemSnapshot]
+
+
 class ClosetExtractionSnapshot(BaseModel):
     item_id: UUID
     lifecycle_status: str

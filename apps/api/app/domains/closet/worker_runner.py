@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.storage import ObjectStorageClient, S3StorageClient
+from app.db.session import SessionLocal
 from app.domains.closet.background_removal import (
     BackgroundRemovalProvider,
     build_background_removal_provider,
@@ -22,6 +23,7 @@ from app.domains.closet.models import ClosetJob, ProcessingRunType
 from app.domains.closet.normalization_service import ClosetNormalizationService
 from app.domains.closet.repository import ClosetJobRepository, ClosetRepository
 from app.domains.closet.service import ClosetLifecycleService
+from app.domains.closet.similarity_service import ClosetSimilarityService
 from app.domains.closet.worker import JobHandler
 from app.domains.closet.worker import run_once as run_worker_once
 
@@ -112,6 +114,24 @@ def build_normalization_handler() -> JobHandler:
     return handler
 
 
+def build_similarity_handler(
+    *,
+    storage: ObjectStorageClient | None = None,
+) -> JobHandler:
+    storage_client = storage or build_storage_client()
+
+    def handler(session: Session, job: ClosetJob) -> None:
+        similarity_service = ClosetSimilarityService(
+            session=session,
+            repository=ClosetRepository(session),
+            job_repository=ClosetJobRepository(session),
+            storage=storage_client,
+        )
+        similarity_service.handle_similarity_job(job=job)
+
+    return handler
+
+
 def build_worker_handlers(
     *,
     storage: ObjectStorageClient | None = None,
@@ -129,6 +149,7 @@ def build_worker_handlers(
             metadata_extraction_provider=metadata_extraction_provider,
         ),
         ProcessingRunType.NORMALIZATION_PROJECTION: build_normalization_handler(),
+        ProcessingRunType.SIMILARITY_RECOMPUTE: build_similarity_handler(storage=storage),
     }
 
 
@@ -160,8 +181,27 @@ def run_forever(
             time.sleep(poll_interval_seconds)
 
 
+def enqueue_similarity_backfill(*, storage: ObjectStorageClient | None = None) -> int:
+    session = SessionLocal()
+    try:
+        similarity_service = ClosetSimilarityService(
+            session=session,
+            repository=ClosetRepository(session),
+            job_repository=ClosetJobRepository(session),
+            storage=storage or build_storage_client(),
+        )
+        return similarity_service.enqueue_similarity_backfill()
+    finally:
+        session.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the closet worker.")
+    parser.add_argument(
+        "--enqueue-similarity-backfill",
+        action="store_true",
+        help="Enqueue similarity recompute jobs for confirmed items missing a completed run.",
+    )
     parser.add_argument("--once", action="store_true", help="Run at most one job and exit.")
     parser.add_argument(
         "--worker-name",
@@ -175,6 +215,11 @@ def main() -> None:
         help="Sleep interval between polling attempts when no jobs are available.",
     )
     args = parser.parse_args()
+
+    if args.enqueue_similarity_backfill:
+        count = enqueue_similarity_backfill()
+        print(f"Enqueued {count} similarity backfill jobs.")
+        return
 
     if args.once:
         run_once(worker_name=args.worker_name)
