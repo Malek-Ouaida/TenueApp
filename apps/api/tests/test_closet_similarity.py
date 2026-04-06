@@ -482,12 +482,15 @@ def test_similarity_worker_creates_duplicate_candidates_and_explanations(
 
     confirm_item_via_api(client, headers, item_id=first_item_id)
     confirm_item_via_api(client, headers, item_id=second_item_id)
-    assert drain_worker(
-        db_session,
-        fake_storage_client,
-        fake_background_removal_provider,
-        fake_metadata_extraction_provider,
-    ) >= 2
+    assert (
+        drain_worker(
+            db_session,
+            fake_storage_client,
+            fake_background_removal_provider,
+            fake_metadata_extraction_provider,
+        )
+        >= 2
+    )
 
     first_response = client.get(f"/closet/items/{first_item_id}/duplicates", headers=headers)
     second_response = client.get(f"/closet/items/{second_item_id}/duplicates", headers=headers)
@@ -564,12 +567,15 @@ def test_similarity_metadata_only_fallback_returns_similar_items_with_issues(
         trigger="test",
     )
     db_session.commit()
-    assert drain_worker(
-        db_session,
-        fake_storage_client,
-        fake_background_removal_provider,
-        fake_metadata_extraction_provider,
-    ) >= 1
+    assert (
+        drain_worker(
+            db_session,
+            fake_storage_client,
+            fake_background_removal_provider,
+            fake_metadata_extraction_provider,
+        )
+        >= 1
+    )
 
     response = client.get(f"/closet/items/{first_item_id}/similar", headers=headers)
 
@@ -617,12 +623,15 @@ def test_similarity_actions_are_idempotent_and_visible_from_both_items(
     )
     confirm_item_via_api(client, headers, item_id=first_item_id)
     confirm_item_via_api(client, headers, item_id=second_item_id)
-    assert drain_worker(
-        db_session,
-        fake_storage_client,
-        fake_background_removal_provider,
-        fake_metadata_extraction_provider,
-    ) >= 2
+    assert (
+        drain_worker(
+            db_session,
+            fake_storage_client,
+            fake_background_removal_provider,
+            fake_metadata_extraction_provider,
+        )
+        >= 2
+    )
 
     duplicates = client.get(f"/closet/items/{first_item_id}/duplicates", headers=headers)
     edge_id = duplicates.json()["items"][0]["edge_id"]
@@ -699,12 +708,15 @@ def test_marked_duplicates_survive_recompute_even_after_algorithmic_score_drops(
     )
     confirm_item_via_api(client, headers, item_id=first_item_id)
     confirm_item_via_api(client, headers, item_id=second_item_id)
-    assert drain_worker(
-        db_session,
-        fake_storage_client,
-        fake_background_removal_provider,
-        fake_metadata_extraction_provider,
-    ) >= 2
+    assert (
+        drain_worker(
+            db_session,
+            fake_storage_client,
+            fake_background_removal_provider,
+            fake_metadata_extraction_provider,
+        )
+        >= 2
+    )
 
     duplicate_response = client.get(
         f"/closet/items/{first_item_id}/duplicates",
@@ -737,12 +749,15 @@ def test_marked_duplicates_survive_recompute_even_after_algorithmic_score_drops(
         trigger="test",
     )
     db_session.commit()
-    assert drain_worker(
-        db_session,
-        fake_storage_client,
-        fake_background_removal_provider,
-        fake_metadata_extraction_provider,
-    ) >= 1
+    assert (
+        drain_worker(
+            db_session,
+            fake_storage_client,
+            fake_background_removal_provider,
+            fake_metadata_extraction_provider,
+        )
+        >= 1
+    )
 
     duplicates = client.get(f"/closet/items/{first_item_id}/duplicates", headers=headers)
 

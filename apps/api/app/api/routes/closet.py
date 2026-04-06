@@ -304,9 +304,7 @@ def read_item_history(
 def read_similar_items(
     item_id: UUID,
     current_user: CurrentUser,
-    similarity_service: Annotated[
-        ClosetSimilarityService, Depends(get_closet_similarity_service)
-    ],
+    similarity_service: Annotated[ClosetSimilarityService, Depends(get_closet_similarity_service)],
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> ClosetSimilarityListResponse:
     try:
@@ -325,9 +323,7 @@ def read_similar_items(
 def read_duplicate_items(
     item_id: UUID,
     current_user: CurrentUser,
-    similarity_service: Annotated[
-        ClosetSimilarityService, Depends(get_closet_similarity_service)
-    ],
+    similarity_service: Annotated[ClosetSimilarityService, Depends(get_closet_similarity_service)],
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> ClosetSimilarityListResponse:
     try:
@@ -515,13 +511,13 @@ def reextract_item_metadata(
 
     response.status_code = status_code
     return build_extraction_snapshot(snapshot)
+
+
 @router.post("/similarity/{edge_id}/dismiss", response_model=ClosetSimilarityEdgeSnapshot)
 def dismiss_similarity_edge(
     edge_id: UUID,
     current_user: CurrentUser,
-    similarity_service: Annotated[
-        ClosetSimilarityService, Depends(get_closet_similarity_service)
-    ],
+    similarity_service: Annotated[ClosetSimilarityService, Depends(get_closet_similarity_service)],
 ) -> ClosetSimilarityEdgeSnapshot:
     try:
         snapshot = similarity_service.dismiss_edge(
@@ -538,9 +534,7 @@ def dismiss_similarity_edge(
 def mark_similarity_edge_duplicate(
     edge_id: UUID,
     current_user: CurrentUser,
-    similarity_service: Annotated[
-        ClosetSimilarityService, Depends(get_closet_similarity_service)
-    ],
+    similarity_service: Annotated[ClosetSimilarityService, Depends(get_closet_similarity_service)],
 ) -> ClosetSimilarityEdgeSnapshot:
     try:
         snapshot = similarity_service.mark_edge_duplicate(
@@ -756,10 +750,7 @@ def build_similarity_list_snapshot(
         item_id=getattr(snapshot, "item_id"),
         similarity_status=getattr(snapshot, "similarity_status"),
         latest_run=_build_run_payload(getattr(snapshot, "latest_run")),
-        items=[
-            build_similarity_list_item_snapshot(item)
-            for item in getattr(snapshot, "items")
-        ],
+        items=[build_similarity_list_item_snapshot(item) for item in getattr(snapshot, "items")],
     )
 
 

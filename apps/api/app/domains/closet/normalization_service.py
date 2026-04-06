@@ -119,9 +119,12 @@ class ClosetNormalizationService:
             not in {ProviderResultStatus.SUCCEEDED, ProviderResultStatus.PARTIAL}
         ):
             raise build_error(METADATA_NORMALIZATION_NOT_READY)
-        if self.repository.count_field_candidates_for_provider_result(
-            provider_result_id=provider_result.id
-        ) == 0:
+        if (
+            self.repository.count_field_candidates_for_provider_result(
+                provider_result_id=provider_result.id
+            )
+            == 0
+        ):
             raise build_error(METADATA_NORMALIZATION_CANDIDATE_SET_MISSING)
         if self.job_repository.has_pending_or_running_job(
             closet_item_id=item.id,
@@ -581,9 +584,7 @@ class ClosetNormalizationService:
             else ProcessingStatus.COMPLETED
         )
         run.completed_at = utcnow()
-        run.failure_code = (
-            "metadata_normalization_issues" if unique_issue_notes else None
-        )
+        run.failure_code = "metadata_normalization_issues" if unique_issue_notes else None
         run.failure_payload = (
             {
                 "issues": unique_issue_notes,

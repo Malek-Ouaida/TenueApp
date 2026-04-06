@@ -20,10 +20,12 @@ from app.domains.closet.models import (
     MediaAsset,
 )
 from app.domains.wear.models import (
+    Outfit,
     WearContext,
     WearItemRole,
     WearItemSource,
     WearLog,
+    WearLogSnapshot,
     WearLogSource,
 )
 from app.domains.wear.repository import WearRepository
@@ -34,6 +36,14 @@ class RequestedWearItem:
     closet_item_id: UUID
     role: WearItemRole | None
     sort_index: int
+
+
+@dataclass(frozen=True)
+class WearLinkedOutfitSnapshot:
+    id: UUID
+    title: str | None
+    is_favorite: bool
+    is_archived: bool
 
 
 @dataclass(frozen=True)
@@ -59,6 +69,7 @@ class WearLogDetailSnapshot:
     is_confirmed: bool
     item_count: int
     cover_image: ProcessingSnapshotImage | None
+    linked_outfit: WearLinkedOutfitSnapshot | None
     items: list[WearLoggedItemSnapshot]
     created_at: datetime
     updated_at: datetime
@@ -73,6 +84,7 @@ class WearLogTimelineItemSnapshot:
     source: str
     is_confirmed: bool
     cover_image: ProcessingSnapshotImage | None
+    outfit_title: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -86,6 +98,7 @@ class WearCalendarDaySnapshot:
     source: str | None
     is_confirmed: bool | None
     cover_image: ProcessingSnapshotImage | None
+    outfit_title: str | None
 
 
 class WearServiceError(Exception):
@@ -116,45 +129,36 @@ class WearService:
         *,
         user_id: UUID,
         wear_date: date,
+        mode: str,
         context: str | None,
         notes: str | None,
-        items: list[dict[str, object]],
+        items: list[dict[str, object]] | None,
+        outfit_id: UUID | None,
     ) -> WearLogDetailSnapshot:
-        normalized_items = self._normalize_requested_items(items)
         self._ensure_wear_date_available(user_id=user_id, wear_date=wear_date)
-        confirmed_items = self._get_confirmed_items_or_raise(
-            user_id=user_id,
-            item_ids=[item.closet_item_id for item in normalized_items],
-        )
 
-        wear_log = self.repository.create_wear_log(
-            user_id=user_id,
-            wear_date=wear_date,
-            source=WearLogSource.MANUAL_ITEMS,
-            context=WearContext(context) if context is not None else None,
-            notes=notes,
-            is_confirmed=True,
-        )
-        self.repository.create_wear_log_items(
-            wear_log_id=wear_log.id,
-            items=[
-                {
-                    "closet_item_id": item.closet_item_id,
-                    "source": WearItemSource.MANUAL,
-                    "match_confidence": None,
-                    "sort_index": item.sort_index,
-                    "role": item.role,
-                }
-                for item in normalized_items
-            ],
-        )
-        self.repository.upsert_wear_log_snapshot(
-            wear_log_id=wear_log.id,
-            items_snapshot_json=self._build_items_snapshot_json(
-                normalized_items=normalized_items,
-                confirmed_items=confirmed_items,
-            ),
-        )
+        if mode == WearLogSource.MANUAL_ITEMS.value:
+            if items is None:
+                raise WearServiceError(422, "Items are required for manual wear logging.")
+            wear_log = self._create_manual_wear_log(
+                user_id=user_id,
+                wear_date=wear_date,
+                context=context,
+                notes=notes,
+                items=items,
+            )
+        elif mode == WearLogSource.SAVED_OUTFIT.value:
+            if outfit_id is None:
+                raise WearServiceError(422, "outfit_id is required for saved-outfit wear logging.")
+            wear_log = self._create_saved_outfit_wear_log(
+                user_id=user_id,
+                wear_date=wear_date,
+                context=context,
+                notes=notes,
+                outfit_id=outfit_id,
+            )
+        else:
+            raise WearServiceError(422, "Unsupported wear-log mode.")
 
         self.session.commit()
         return self.get_wear_log_detail(wear_log_id=wear_log.id, user_id=user_id)
@@ -171,6 +175,13 @@ class WearService:
             asset_ids=self._collect_snapshot_asset_ids(snapshot_items)
         )
         items = [self._build_logged_item_snapshot(item, assets_by_id) for item in snapshot_items]
+        linked_outfit = None
+        if wear_log.outfit_id is not None:
+            outfit = self.repository.get_outfit_for_user(
+                outfit_id=wear_log.outfit_id,
+                user_id=user_id,
+            )
+            linked_outfit = self._build_linked_outfit_snapshot(outfit)
         return WearLogDetailSnapshot(
             id=wear_log.id,
             wear_date=wear_log.wear_date,
@@ -180,6 +191,7 @@ class WearService:
             is_confirmed=wear_log.is_confirmed,
             item_count=len(items),
             cover_image=self._build_cover_image(snapshot_items, assets_by_id),
+            linked_outfit=linked_outfit,
             items=items,
             created_at=wear_log.created_at,
             updated_at=wear_log.updated_at,
@@ -212,10 +224,18 @@ class WearService:
         assets_by_id = self.repository.get_media_assets_by_ids(
             asset_ids=self._collect_cover_asset_ids(snapshot_items_by_log.values())
         )
+        outfits_by_id = self.repository.get_outfits_for_user(
+            outfit_ids=[
+                wear_log.outfit_id for wear_log in visible_logs if wear_log.outfit_id is not None
+            ],
+            user_id=user_id,
+        )
         items = [
             self._build_timeline_item(
                 wear_log=wear_log,
                 snapshot_items=snapshot_items_by_log.get(wear_log.id, []),
+                snapshot=snapshots.get(wear_log.id),
+                outfits_by_id=outfits_by_id,
                 assets_by_id=assets_by_id,
             )
             for wear_log in visible_logs
@@ -284,8 +304,18 @@ class WearService:
                     for item in normalized_items
                 ],
             )
+            if wear_log.outfit_id is not None or wear_log.source in {
+                WearLogSource.SAVED_OUTFIT,
+                WearLogSource.PHOTO_DETECTED,
+                WearLogSource.MIXED,
+            }:
+                wear_log.source = WearLogSource.MIXED
+            else:
+                wear_log.source = WearLogSource.MANUAL_ITEMS
+            wear_log.outfit_id = None
             self.repository.upsert_wear_log_snapshot(
                 wear_log_id=wear_log.id,
+                outfit_title_snapshot=None,
                 items_snapshot_json=self._build_items_snapshot_json(
                     normalized_items=normalized_items,
                     confirmed_items=confirmed_items,
@@ -335,6 +365,12 @@ class WearService:
         assets_by_id = self.repository.get_media_assets_by_ids(
             asset_ids=self._collect_cover_asset_ids(snapshot_items_by_log.values())
         )
+        outfits_by_id = self.repository.get_outfits_for_user(
+            outfit_ids=[
+                wear_log.outfit_id for wear_log in wear_logs if wear_log.outfit_id is not None
+            ],
+            user_id=user_id,
+        )
         logs_by_date = {wear_log.wear_date: wear_log for wear_log in wear_logs}
 
         days: list[WearCalendarDaySnapshot] = []
@@ -351,10 +387,12 @@ class WearService:
                         source=None,
                         is_confirmed=None,
                         cover_image=None,
+                        outfit_title=None,
                     )
                 )
             else:
                 snapshot_items = snapshot_items_by_log.get(wear_log.id, [])
+                snapshot = snapshots.get(wear_log.id)
                 days.append(
                     WearCalendarDaySnapshot(
                         date=current_date,
@@ -364,16 +402,135 @@ class WearService:
                         source=wear_log.source.value,
                         is_confirmed=wear_log.is_confirmed,
                         cover_image=self._build_cover_image(snapshot_items, assets_by_id),
+                        outfit_title=self._get_outfit_title_for_log(
+                            wear_log=wear_log,
+                            snapshot=snapshot,
+                            outfits_by_id=outfits_by_id,
+                        ),
                     )
                 )
             current_date += timedelta(days=1)
         return days
+
+    def _create_manual_wear_log(
+        self,
+        *,
+        user_id: UUID,
+        wear_date: date,
+        context: str | None,
+        notes: str | None,
+        items: list[dict[str, object]],
+    ) -> WearLog:
+        normalized_items = self._normalize_requested_items(items)
+        confirmed_items = self._get_confirmed_items_or_raise(
+            user_id=user_id,
+            item_ids=[item.closet_item_id for item in normalized_items],
+        )
+
+        wear_log = self.repository.create_wear_log(
+            user_id=user_id,
+            wear_date=wear_date,
+            outfit_id=None,
+            source=WearLogSource.MANUAL_ITEMS,
+            context=WearContext(context) if context is not None else None,
+            notes=notes,
+            is_confirmed=True,
+        )
+        self.repository.create_wear_log_items(
+            wear_log_id=wear_log.id,
+            items=[
+                {
+                    "closet_item_id": item.closet_item_id,
+                    "source": WearItemSource.MANUAL,
+                    "match_confidence": None,
+                    "sort_index": item.sort_index,
+                    "role": item.role,
+                }
+                for item in normalized_items
+            ],
+        )
+        self.repository.upsert_wear_log_snapshot(
+            wear_log_id=wear_log.id,
+            outfit_title_snapshot=None,
+            items_snapshot_json=self._build_items_snapshot_json(
+                normalized_items=normalized_items,
+                confirmed_items=confirmed_items,
+            ),
+        )
+        return wear_log
+
+    def _create_saved_outfit_wear_log(
+        self,
+        *,
+        user_id: UUID,
+        wear_date: date,
+        context: str | None,
+        notes: str | None,
+        outfit_id: UUID,
+    ) -> WearLog:
+        outfit = self._get_loggable_outfit_or_raise(outfit_id=outfit_id, user_id=user_id)
+        outfit_items = self.repository.list_outfit_items(outfit_id=outfit.id)
+        if not outfit_items:
+            raise WearServiceError(409, "Outfit does not contain any items to log.")
+
+        normalized_items = [
+            RequestedWearItem(
+                closet_item_id=item.closet_item_id,
+                role=item.role,
+                sort_index=item.sort_index,
+            )
+            for item in outfit_items
+        ]
+        confirmed_items = self._get_confirmed_items_or_raise(
+            user_id=user_id,
+            item_ids=[item.closet_item_id for item in normalized_items],
+        )
+
+        wear_log = self.repository.create_wear_log(
+            user_id=user_id,
+            wear_date=wear_date,
+            outfit_id=outfit.id,
+            source=WearLogSource.SAVED_OUTFIT,
+            context=WearContext(context) if context is not None else None,
+            notes=notes,
+            is_confirmed=True,
+        )
+        self.repository.create_wear_log_items(
+            wear_log_id=wear_log.id,
+            items=[
+                {
+                    "closet_item_id": item.closet_item_id,
+                    "source": WearItemSource.FROM_OUTFIT,
+                    "match_confidence": None,
+                    "sort_index": item.sort_index,
+                    "role": item.role,
+                }
+                for item in normalized_items
+            ],
+        )
+        self.repository.upsert_wear_log_snapshot(
+            wear_log_id=wear_log.id,
+            outfit_title_snapshot=outfit.title,
+            items_snapshot_json=self._build_items_snapshot_json(
+                normalized_items=normalized_items,
+                confirmed_items=confirmed_items,
+            ),
+        )
+        return wear_log
 
     def _get_wear_log_or_raise(self, *, wear_log_id: UUID, user_id: UUID) -> WearLog:
         wear_log = self.repository.get_wear_log_for_user(wear_log_id=wear_log_id, user_id=user_id)
         if wear_log is None:
             raise WearServiceError(404, "Wear log not found.")
         return wear_log
+
+    def _get_loggable_outfit_or_raise(self, *, outfit_id: UUID, user_id: UUID) -> Outfit:
+        outfit = self.repository.get_outfit_for_user(outfit_id=outfit_id, user_id=user_id)
+        if outfit is None:
+            raise WearServiceError(404, "Outfit not found.")
+        if outfit.archived_at is not None:
+            raise WearServiceError(409, "Archived outfits cannot be used for wear logging.")
+        return outfit
 
     def _ensure_wear_date_available(
         self,
@@ -556,8 +713,11 @@ class WearService:
         *,
         wear_log: WearLog,
         snapshot_items: list[dict[str, object]],
+        snapshot: WearLogSnapshot | None,
+        outfits_by_id: dict[UUID, Outfit],
         assets_by_id: dict[UUID, MediaAsset],
     ) -> WearLogTimelineItemSnapshot:
+        snapshot_title = snapshot.outfit_title_snapshot if snapshot is not None else None
         return WearLogTimelineItemSnapshot(
             id=wear_log.id,
             wear_date=wear_log.wear_date,
@@ -566,9 +726,45 @@ class WearService:
             source=wear_log.source.value,
             is_confirmed=wear_log.is_confirmed,
             cover_image=self._build_cover_image(snapshot_items, assets_by_id),
+            outfit_title=self._get_outfit_title_for_log(
+                wear_log=wear_log,
+                snapshot=snapshot,
+                outfits_by_id=outfits_by_id,
+                snapshot_title=snapshot_title,
+            ),
             created_at=wear_log.created_at,
             updated_at=wear_log.updated_at,
         )
+
+    def _build_linked_outfit_snapshot(
+        self,
+        outfit: Outfit | None,
+    ) -> WearLinkedOutfitSnapshot | None:
+        if outfit is None:
+            return None
+        return WearLinkedOutfitSnapshot(
+            id=outfit.id,
+            title=outfit.title,
+            is_favorite=outfit.is_favorite,
+            is_archived=outfit.archived_at is not None,
+        )
+
+    def _get_outfit_title_for_log(
+        self,
+        *,
+        wear_log: WearLog,
+        snapshot: WearLogSnapshot | None,
+        outfits_by_id: dict[UUID, Outfit],
+        snapshot_title: str | None = None,
+    ) -> str | None:
+        if snapshot_title is None and snapshot is not None:
+            snapshot_title = getattr(snapshot, "outfit_title_snapshot", None)
+        if snapshot_title:
+            return snapshot_title
+        if wear_log.outfit_id is None:
+            return None
+        outfit = outfits_by_id.get(wear_log.outfit_id)
+        return outfit.title if outfit is not None else None
 
     def _build_cover_image(
         self,

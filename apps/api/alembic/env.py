@@ -48,6 +48,7 @@ def run_migrations_online() -> None:
         with context.begin_transaction():
             context.run_migrations()
 
+
 def widen_alembic_version_num_if_needed(connection) -> None:
     if connection.dialect.name != "postgresql":
         return

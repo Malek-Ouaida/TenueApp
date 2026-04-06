@@ -190,6 +190,8 @@ def run_worker_once(
         ),
     )
     return worker.run_once(worker_name="test-image-worker")
+
+
 def test_upload_complete_enqueues_image_processing(
     client: TestClient,
     db_session: Session,
@@ -595,22 +597,28 @@ def test_reprocess_success_and_idempotent_replay(
     )
 
     assert len(jobs) == 3
-    assert len(
-        [
-            job
-            for job in jobs
-            if job.job_kind == ProcessingRunType.IMAGE_PROCESSING
-            and job.status == ClosetJobStatus.PENDING
-        ]
-    ) == 1
-    assert len(
-        [
-            job
-            for job in jobs
-            if job.job_kind == ProcessingRunType.METADATA_EXTRACTION
-            and job.status == ClosetJobStatus.PENDING
-        ]
-    ) == 1
+    assert (
+        len(
+            [
+                job
+                for job in jobs
+                if job.job_kind == ProcessingRunType.IMAGE_PROCESSING
+                and job.status == ClosetJobStatus.PENDING
+            ]
+        )
+        == 1
+    )
+    assert (
+        len(
+            [
+                job
+                for job in jobs
+                if job.job_kind == ProcessingRunType.METADATA_EXTRACTION
+                and job.status == ClosetJobStatus.PENDING
+            ]
+        )
+        == 1
+    )
     assert "image_reprocess_requested" in [event.event_type for event in audit_events]
 
 

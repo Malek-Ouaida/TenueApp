@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    String,
     Text,
     UniqueConstraint,
     Uuid,
@@ -74,10 +75,83 @@ class WearItemRole(str, Enum):
     OTHER = "other"
 
 
+class OutfitSource(str, Enum):
+    MANUAL = "manual"
+    DERIVED_FROM_WEAR_LOG = "derived_from_wear_log"
+    AI_SUGGESTED = "ai_suggested"
+
+
+class OutfitSeason(str, Enum):
+    SUMMER = "summer"
+    WINTER = "winter"
+
+
+class Outfit(Base):
+    __tablename__ = "outfits"
+    __table_args__ = (
+        Index("ix_outfits_user_archived_updated", "user_id", "archived_at", "updated_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+    )
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    occasion: Mapped[WearContext | None] = mapped_column(
+        string_enum(WearContext),
+        nullable=True,
+    )
+    season: Mapped[OutfitSeason | None] = mapped_column(
+        string_enum(OutfitSeason),
+        nullable=True,
+    )
+    source: Mapped[OutfitSource] = mapped_column(
+        string_enum(OutfitSource),
+        default=OutfitSource.MANUAL,
+    )
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+
+class OutfitItem(Base):
+    __tablename__ = "outfit_items"
+    __table_args__ = (
+        Index("ix_outfit_items_outfit_sort", "outfit_id", "sort_index"),
+        UniqueConstraint("outfit_id", "closet_item_id", name="uq_outfit_items_outfit_item"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    outfit_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("outfits.id", ondelete="CASCADE"),
+    )
+    closet_item_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("closet_items.id", ondelete="CASCADE"),
+    )
+    role: Mapped[WearItemRole | None] = mapped_column(
+        string_enum(WearItemRole),
+        nullable=True,
+    )
+    layer_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sort_index: Mapped[int] = mapped_column(Integer, default=0)
+    is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class WearLog(Base):
     __tablename__ = "wear_logs"
     __table_args__ = (
         Index("ix_wear_logs_user_wear_date", "user_id", "wear_date"),
+        Index("ix_wear_logs_outfit_id", "outfit_id"),
         UniqueConstraint("user_id", "wear_date", name="uq_wear_logs_user_wear_date"),
     )
 
@@ -87,6 +161,11 @@ class WearLog(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
     )
     wear_date: Mapped[date] = mapped_column(Date, nullable=False)
+    outfit_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("outfits.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     source: Mapped[WearLogSource] = mapped_column(
         string_enum(WearLogSource),
         default=WearLogSource.MANUAL_ITEMS,
@@ -143,5 +222,6 @@ class WearLogSnapshot(Base):
         ForeignKey("wear_logs.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    outfit_title_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
     items_snapshot_json: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

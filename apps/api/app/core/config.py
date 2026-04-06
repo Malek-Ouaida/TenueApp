@@ -117,9 +117,7 @@ def load_settings() -> Settings:
             os.getenv("CLOSET_MEDIA_DOWNLOAD_TTL_SECONDS", "300")
         ),
         closet_thumbnail_max_edge=int(os.getenv("CLOSET_THUMBNAIL_MAX_EDGE", "512")),
-        closet_job_lock_timeout_seconds=int(
-            os.getenv("CLOSET_JOB_LOCK_TIMEOUT_SECONDS", "900")
-        ),
+        closet_job_lock_timeout_seconds=int(os.getenv("CLOSET_JOB_LOCK_TIMEOUT_SECONDS", "900")),
         closet_job_retry_base_delay_seconds=int(
             os.getenv("CLOSET_JOB_RETRY_BASE_DELAY_SECONDS", "30")
         ),

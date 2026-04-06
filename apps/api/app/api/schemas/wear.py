@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal, TypeAlias
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -25,12 +27,10 @@ class WearLogItemWriteRequest(BaseModel):
     sort_index: int | None = Field(default=None, ge=0)
 
 
-class WearLogCreateRequest(BaseModel):
+class _WearLogWriteBase(BaseModel):
     wear_date: date
-    mode: Literal["manual_items"]
     context: WearContextValue | None = None
     notes: str | None = None
-    items: list[WearLogItemWriteRequest] = Field(min_length=1, max_length=20)
 
     @field_validator("notes")
     @classmethod
@@ -44,6 +44,22 @@ class WearLogCreateRequest(BaseModel):
         if len(normalized) > 1000:
             raise ValueError("Notes must be 1000 characters or fewer.")
         return normalized
+
+
+class ManualWearLogCreateRequest(_WearLogWriteBase):
+    mode: Literal["manual_items"]
+    items: list[WearLogItemWriteRequest] = Field(min_length=1, max_length=20)
+
+
+class SavedOutfitWearLogCreateRequest(_WearLogWriteBase):
+    mode: Literal["saved_outfit"]
+    outfit_id: UUID
+
+
+WearLogCreateRequest: TypeAlias = Annotated[
+    ManualWearLogCreateRequest | SavedOutfitWearLogCreateRequest,
+    Field(discriminator="mode"),
+]
 
 
 class WearLogUpdateRequest(BaseModel):
@@ -64,6 +80,13 @@ class WearLogUpdateRequest(BaseModel):
         if len(normalized) > 1000:
             raise ValueError("Notes must be 1000 characters or fewer.")
         return normalized
+
+
+class WearLinkedOutfitSnapshot(BaseModel):
+    id: UUID
+    title: str | None
+    is_favorite: bool
+    is_archived: bool
 
 
 class WearLoggedItemSnapshot(BaseModel):
@@ -87,6 +110,7 @@ class WearLogDetailSnapshot(BaseModel):
     is_confirmed: bool
     item_count: int
     cover_image: ClosetProcessingImageSnapshot | None
+    linked_outfit: WearLinkedOutfitSnapshot | None
     items: list[WearLoggedItemSnapshot]
     created_at: datetime
     updated_at: datetime
@@ -100,6 +124,7 @@ class WearLogTimelineItemSnapshot(BaseModel):
     source: str
     is_confirmed: bool
     cover_image: ClosetProcessingImageSnapshot | None
+    outfit_title: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -117,6 +142,7 @@ class WearCalendarDaySnapshot(BaseModel):
     source: str | None
     is_confirmed: bool | None
     cover_image: ClosetProcessingImageSnapshot | None
+    outfit_title: str | None
 
 
 class WearCalendarResponse(BaseModel):

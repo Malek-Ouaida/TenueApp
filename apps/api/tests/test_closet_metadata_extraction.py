@@ -187,9 +187,7 @@ def run_worker_once(
     return worker.run_once(worker_name="test-closet-worker")
 
 
-def latest_provider_result_for_item(
-    db_session: Session, *, item_id: UUID
-) -> ProviderResult | None:
+def latest_provider_result_for_item(db_session: Session, *, item_id: UUID) -> ProviderResult | None:
     return (
         db_session.execute(
             select(ProviderResult)
@@ -393,9 +391,7 @@ def test_failed_image_processing_does_not_enqueue_metadata_extraction(
 
     assert job is not None
     jobs = list(
-        db_session.execute(
-            select(ClosetJob).where(ClosetJob.closet_item_id == item_id)
-        ).scalars()
+        db_session.execute(select(ClosetJob).where(ClosetJob.closet_item_id == item_id)).scalars()
     )
     assert len(jobs) == 1
     assert jobs[0].job_kind == ProcessingRunType.IMAGE_PROCESSING
@@ -473,9 +469,10 @@ def test_metadata_extraction_completion_auto_enqueues_normalization(
         event for event in audit_events if event.event_type == "metadata_normalization_enqueued"
     )
     assert isinstance(enqueue_event.payload, dict)
-    assert enqueue_event.payload["source_provider_result_id"] == jobs[2].payload[
-        "source_provider_result_id"
-    ]
+    assert (
+        enqueue_event.payload["source_provider_result_id"]
+        == jobs[2].payload["source_provider_result_id"]
+    )
 
     response = client.get(f"/closet/items/{item_id}/extraction", headers=headers)
     assert response.status_code == 200
@@ -666,8 +663,7 @@ def test_partial_extraction_marks_completed_with_issues_and_keeps_valid_candidat
     assert body["extraction_status"] == "completed_with_issues"
     assert body["provider_results"][0]["status"] == "partial"
     candidate_fields = [
-        candidate["field_name"]
-        for candidate in body["current_candidate_set"]["field_candidates"]
+        candidate["field_name"] for candidate in body["current_candidate_set"]["field_candidates"]
     ]
     assert candidate_fields == ["category"]
 
@@ -1264,7 +1260,6 @@ def test_failed_reextract_preserves_previous_candidate_set(
     assert body["extraction_status"] == "failed"
     assert body["current_candidate_set"] is not None
     candidate_fields = [
-        candidate["field_name"]
-        for candidate in body["current_candidate_set"]["field_candidates"]
+        candidate["field_name"] for candidate in body["current_candidate_set"]["field_candidates"]
     ]
     assert candidate_fields == ["category", "subcategory"]
