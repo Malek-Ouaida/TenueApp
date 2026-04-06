@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, exists, func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.closet.models import (
     ClosetItem,
@@ -258,6 +259,7 @@ class WearRepository:
         user_id: UUID,
         start_date: date,
         end_date: date,
+        confirmed_only: bool = False,
     ) -> list[WearLog]:
         statement = (
             select(WearLog)
@@ -268,6 +270,8 @@ class WearRepository:
             )
             .order_by(WearLog.wear_date.asc(), WearLog.created_at.asc(), WearLog.id.asc())
         )
+        if confirmed_only:
+            statement = statement.where(WearLog.is_confirmed.is_(True))
         return list(self.session.execute(statement).scalars())
 
     def create_wear_log_items(
@@ -308,6 +312,28 @@ class WearRepository:
             .order_by(WearLogItem.sort_index.asc(), WearLogItem.id.asc())
         )
         return list(self.session.execute(statement).scalars())
+
+    def list_wear_log_items_for_logs(
+        self,
+        *,
+        wear_log_ids: list[UUID],
+    ) -> dict[UUID, list[WearLogItem]]:
+        if not wear_log_ids:
+            return {}
+
+        statement = (
+            select(WearLogItem)
+            .where(WearLogItem.wear_log_id.in_(wear_log_ids))
+            .order_by(
+                WearLogItem.wear_log_id.asc(),
+                WearLogItem.sort_index.asc(),
+                WearLogItem.id.asc(),
+            )
+        )
+        items_by_log: dict[UUID, list[WearLogItem]] = {}
+        for item in self.session.execute(statement).scalars():
+            items_by_log.setdefault(item.wear_log_id, []).append(item)
+        return items_by_log
 
     def get_wear_log_snapshot(self, *, wear_log_id: UUID) -> WearLogSnapshot | None:
         statement = select(WearLogSnapshot).where(WearLogSnapshot.wear_log_id == wear_log_id)
@@ -450,9 +476,292 @@ class WearRepository:
         statement = select(MediaAsset).where(MediaAsset.id.in_(asset_ids))
         return {asset.id: asset for asset in self.session.execute(statement).scalars()}
 
+    def count_active_confirmed_closet_items(self, *, user_id: UUID) -> int:
+        statement = select(func.count(ClosetItem.id)).where(
+            *self._active_confirmed_closet_item_filters(user_id=user_id)
+        )
+        return int(self.session.execute(statement).scalar_one())
+
+    def count_never_worn_active_confirmed_closet_items(self, *, user_id: UUID) -> int:
+        wear_exists = (
+            select(1)
+            .select_from(WearLogItem)
+            .join(WearLog, WearLog.id == WearLogItem.wear_log_id)
+            .where(
+                WearLogItem.closet_item_id == ClosetItem.id,
+                WearLog.user_id == user_id,
+                WearLog.is_confirmed.is_(True),
+            )
+            .correlate(ClosetItem)
+        )
+        statement = select(func.count(ClosetItem.id)).where(
+            *self._active_confirmed_closet_item_filters(user_id=user_id),
+            ~exists(wear_exists),
+        )
+        return int(self.session.execute(statement).scalar_one())
+
+    def get_wear_activity_aggregate(
+        self,
+        *,
+        user_id: UUID,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> tuple[int, int, int]:
+        wear_log_count = func.count(func.distinct(WearLog.id))
+        worn_item_count = func.count(WearLogItem.id)
+        unique_items_worn = func.count(func.distinct(WearLogItem.closet_item_id))
+
+        statement = (
+            select(wear_log_count, worn_item_count, unique_items_worn)
+            .select_from(WearLog)
+            .outerjoin(WearLogItem, WearLogItem.wear_log_id == WearLog.id)
+            .where(
+                WearLog.user_id == user_id,
+                WearLog.is_confirmed.is_(True),
+            )
+        )
+        if start_date is not None:
+            statement = statement.where(WearLog.wear_date >= start_date)
+        if end_date is not None:
+            statement = statement.where(WearLog.wear_date <= end_date)
+
+        row = self.session.execute(statement).one()
+        return (
+            int(row[0] or 0),
+            int(row[1] or 0),
+            int(row[2] or 0),
+        )
+
+    def count_active_confirmed_items_worn_in_range(
+        self,
+        *,
+        user_id: UUID,
+        start_date: date,
+        end_date: date,
+    ) -> int:
+        statement = (
+            select(func.count(func.distinct(WearLogItem.closet_item_id)))
+            .select_from(WearLogItem)
+            .join(WearLog, WearLog.id == WearLogItem.wear_log_id)
+            .join(ClosetItem, ClosetItem.id == WearLogItem.closet_item_id)
+            .where(
+                WearLog.user_id == user_id,
+                WearLog.is_confirmed.is_(True),
+                WearLog.wear_date >= start_date,
+                WearLog.wear_date <= end_date,
+                *self._active_confirmed_closet_item_filters(user_id=user_id),
+            )
+        )
+        return int(self.session.execute(statement).scalar_one())
+
+    def list_confirmed_wear_dates(
+        self,
+        *,
+        user_id: UUID,
+        end_date: date,
+    ) -> list[date]:
+        statement = (
+            select(WearLog.wear_date)
+            .where(
+                WearLog.user_id == user_id,
+                WearLog.is_confirmed.is_(True),
+                WearLog.wear_date <= end_date,
+            )
+            .distinct()
+            .order_by(WearLog.wear_date.asc())
+        )
+        return list(self.session.execute(statement).scalars())
+
+    def list_item_usage(
+        self,
+        *,
+        user_id: UUID,
+        offset: int,
+        limit: int,
+        sort: str,
+    ) -> list[tuple[UUID, int, date, date]]:
+        wear_count = func.count(WearLogItem.id).label("wear_count")
+        first_worn_date = func.min(WearLog.wear_date).label("first_worn_date")
+        last_worn_date = func.max(WearLog.wear_date).label("last_worn_date")
+
+        statement = (
+            select(
+                WearLogItem.closet_item_id,
+                wear_count,
+                first_worn_date,
+                last_worn_date,
+            )
+            .select_from(WearLogItem)
+            .join(WearLog, WearLog.id == WearLogItem.wear_log_id)
+            .join(ClosetItem, ClosetItem.id == WearLogItem.closet_item_id)
+            .where(
+                WearLog.user_id == user_id,
+                WearLog.is_confirmed.is_(True),
+                *self._active_confirmed_closet_item_filters(user_id=user_id),
+            )
+            .group_by(WearLogItem.closet_item_id)
+        )
+        if sort == "least_worn":
+            statement = statement.order_by(
+                wear_count.asc(),
+                last_worn_date.asc(),
+                WearLogItem.closet_item_id.asc(),
+            )
+        else:
+            statement = statement.order_by(
+                wear_count.desc(),
+                last_worn_date.desc(),
+                WearLogItem.closet_item_id.asc(),
+            )
+
+        rows = self.session.execute(statement.offset(offset).limit(limit)).all()
+        return [
+            (
+                row[0],
+                int(row[1]),
+                row[2],
+                row[3],
+            )
+            for row in rows
+        ]
+
+    def list_outfit_usage(
+        self,
+        *,
+        user_id: UUID,
+        offset: int,
+        limit: int,
+    ) -> list[tuple[UUID, int, date, date]]:
+        wear_count = func.count(WearLog.id).label("wear_count")
+        first_worn_date = func.min(WearLog.wear_date).label("first_worn_date")
+        last_worn_date = func.max(WearLog.wear_date).label("last_worn_date")
+
+        statement = (
+            select(
+                WearLog.outfit_id,
+                wear_count,
+                first_worn_date,
+                last_worn_date,
+            )
+            .select_from(WearLog)
+            .join(Outfit, Outfit.id == WearLog.outfit_id)
+            .where(
+                WearLog.user_id == user_id,
+                WearLog.is_confirmed.is_(True),
+                WearLog.outfit_id.is_not(None),
+                Outfit.user_id == user_id,
+            )
+            .group_by(WearLog.outfit_id)
+            .order_by(
+                wear_count.desc(),
+                last_worn_date.desc(),
+                WearLog.outfit_id.asc(),
+            )
+        )
+        rows = self.session.execute(statement.offset(offset).limit(limit)).all()
+        return [
+            (
+                row[0],
+                int(row[1]),
+                row[2],
+                row[3],
+            )
+            for row in rows
+            if row[0] is not None
+        ]
+
+    def list_stale_item_usage(
+        self,
+        *,
+        user_id: UUID,
+        cutoff_date: date,
+        offset: int,
+        limit: int,
+    ) -> list[tuple[UUID, int, date, date]]:
+        wear_count = func.count(WearLogItem.id).label("wear_count")
+        first_worn_date = func.min(WearLog.wear_date).label("first_worn_date")
+        last_worn_date = func.max(WearLog.wear_date).label("last_worn_date")
+
+        statement = (
+            select(
+                WearLogItem.closet_item_id,
+                wear_count,
+                first_worn_date,
+                last_worn_date,
+            )
+            .select_from(WearLogItem)
+            .join(WearLog, WearLog.id == WearLogItem.wear_log_id)
+            .join(ClosetItem, ClosetItem.id == WearLogItem.closet_item_id)
+            .where(
+                WearLog.user_id == user_id,
+                WearLog.is_confirmed.is_(True),
+                *self._active_confirmed_closet_item_filters(user_id=user_id),
+            )
+            .group_by(WearLogItem.closet_item_id)
+            .having(last_worn_date < cutoff_date)
+            .order_by(
+                last_worn_date.asc(),
+                wear_count.desc(),
+                WearLogItem.closet_item_id.asc(),
+            )
+        )
+        rows = self.session.execute(statement.offset(offset).limit(limit)).all()
+        return [
+            (
+                row[0],
+                int(row[1]),
+                row[2],
+                row[3],
+            )
+            for row in rows
+        ]
+
+    def list_never_worn_items(
+        self,
+        *,
+        user_id: UUID,
+        offset: int,
+        limit: int,
+    ) -> list[tuple[UUID, datetime]]:
+        wear_exists = (
+            select(1)
+            .select_from(WearLogItem)
+            .join(WearLog, WearLog.id == WearLogItem.wear_log_id)
+            .where(
+                WearLogItem.closet_item_id == ClosetItem.id,
+                WearLog.user_id == user_id,
+                WearLog.is_confirmed.is_(True),
+            )
+            .correlate(ClosetItem)
+        )
+        statement = (
+            select(ClosetItem.id, ClosetItem.confirmed_at)
+            .where(
+                *self._active_confirmed_closet_item_filters(user_id=user_id),
+                ~exists(wear_exists),
+            )
+            .order_by(ClosetItem.confirmed_at.desc(), ClosetItem.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        rows = self.session.execute(statement).all()
+        return [(row[0], row[1]) for row in rows if row[1] is not None]
+
     def _normalize_cursor_datetime(self, value: datetime | None) -> datetime | None:
         if value is None:
             return None
         if value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
+
+    def _active_confirmed_closet_item_filters(
+        self,
+        *,
+        user_id: UUID,
+    ) -> tuple[ColumnElement[bool], ...]:
+        return (
+            ClosetItem.user_id == user_id,
+            ClosetItem.lifecycle_status == LifecycleStatus.CONFIRMED,
+            ClosetItem.review_status == ReviewStatus.CONFIRMED,
+            ClosetItem.confirmed_at.is_not(None),
+        )
