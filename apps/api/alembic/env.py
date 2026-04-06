@@ -1,6 +1,6 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, inspect, pool, text
 
 from alembic import context
 from app.core.config import settings
@@ -42,10 +42,39 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        widen_alembic_version_num_if_needed(connection)
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()
+
+def widen_alembic_version_num_if_needed(connection) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+
+    inspector = inspect(connection)
+    if "alembic_version" not in inspector.get_table_names():
+        return
+
+    version_column = next(
+        (
+            column
+            for column in inspector.get_columns("alembic_version")
+            if column["name"] == "version_num"
+        ),
+        None,
+    )
+    if version_column is None:
+        return
+
+    length = getattr(version_column["type"], "length", None)
+    if length is None or length >= 64:
+        return
+
+    connection.execute(
+        text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)")
+    )
+    connection.commit()
 
 
 if context.is_offline_mode():
