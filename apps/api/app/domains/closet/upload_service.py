@@ -453,9 +453,7 @@ class ClosetDraftUploadService:
             image_id=item_image.id,
             role=item_image.role.value,
             position=(
-                item_image.position
-                if item_image.role == ClosetItemImageRole.ORIGINAL
-                else None
+                item_image.position if item_image.role == ClosetItemImageRole.ORIGINAL else None
             ),
             is_primary=primary_image_id == item_image.id,
             mime_type=asset.mime_type,

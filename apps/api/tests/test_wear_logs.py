@@ -75,15 +75,18 @@ def create_wear_log(
     headers: dict[str, str],
     *,
     wear_date: str,
-    items: Sequence[dict[str, Any]],
+    items: Sequence[dict[str, Any]] | None = None,
+    outfit_id: str | None = None,
     context: str | None = "casual",
     notes: str | None = "Logged from tests.",
 ):
-    payload: dict[str, Any] = {
-        "wear_date": wear_date,
-        "mode": "manual_items",
-        "items": list(items),
-    }
+    payload: dict[str, Any] = {"wear_date": wear_date}
+    if outfit_id is not None:
+        payload["mode"] = "saved_outfit"
+        payload["outfit_id"] = outfit_id
+    else:
+        payload["mode"] = "manual_items"
+        payload["items"] = list(items or [])
     if context is not None:
         payload["context"] = context
     if notes is not None:
@@ -632,3 +635,183 @@ def test_snapshot_stability_uses_logged_metadata_not_current_closet_projection(
     item = detail_response.json()["items"][0]
     assert item["title"] == "Original title"
     assert item["primary_color"] == "green"
+
+
+def test_create_wear_log_from_saved_outfit_includes_link_and_outfit_titles(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: Any,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+) -> None:
+    headers = register_and_get_headers(client, email="wear-saved-outfit@example.com")
+    top_item_id = create_confirmed_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        headers=headers,
+        title="Cream knit",
+        key_prefix="wear-saved-outfit-top",
+    )
+    bottom_item_id = create_confirmed_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        headers=headers,
+        title="Black trousers",
+        key_prefix="wear-saved-outfit-bottom",
+        raw_fields=build_raw_fields(category="bottom", subcategory="trousers", color="black"),
+    )
+
+    outfit_response = client.post(
+        "/outfits",
+        headers=headers,
+        json={
+            "title": "Office uniform",
+            "occasion": "work",
+            "is_favorite": True,
+            "items": [
+                {"closet_item_id": str(top_item_id), "role": "top", "sort_index": 9},
+                {"closet_item_id": str(bottom_item_id), "role": "bottom", "sort_index": 0},
+            ],
+        },
+    )
+    assert outfit_response.status_code == 201
+    outfit = outfit_response.json()
+
+    response = create_wear_log(
+        client,
+        headers,
+        wear_date="2026-04-06",
+        outfit_id=outfit["id"],
+        context="work",
+        notes="Logged from outfit",
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["source"] == "saved_outfit"
+    assert body["linked_outfit"] == {
+        "id": outfit["id"],
+        "title": "Office uniform",
+        "is_favorite": True,
+        "is_archived": False,
+    }
+    assert [item["closet_item_id"] for item in body["items"]] == [
+        str(bottom_item_id),
+        str(top_item_id),
+    ]
+
+    snapshot = db_session.execute(
+        select(WearLogSnapshot).where(WearLogSnapshot.wear_log_id == UUID(body["id"]))
+    ).scalar_one()
+    assert snapshot.outfit_title_snapshot == "Office uniform"
+
+    timeline_response = client.get("/wear-logs", headers=headers)
+    assert timeline_response.status_code == 200
+    assert timeline_response.json()["items"][0]["outfit_title"] == "Office uniform"
+
+    calendar_response = client.get(
+        "/wear-logs/calendar?start_date=2026-04-06&end_date=2026-04-06",
+        headers=headers,
+    )
+    assert calendar_response.status_code == 200
+    assert calendar_response.json()["days"][0]["outfit_title"] == "Office uniform"
+
+
+def test_updating_saved_outfit_wear_log_items_clears_outfit_link_and_marks_mixed(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: Any,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+) -> None:
+    headers = register_and_get_headers(client, email="wear-mixed-patch@example.com")
+    top_item_id = create_confirmed_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        headers=headers,
+        title="Patch top",
+        key_prefix="wear-mixed-patch-top",
+    )
+    bottom_item_id = create_confirmed_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        headers=headers,
+        title="Patch bottom",
+        key_prefix="wear-mixed-patch-bottom",
+        raw_fields=build_raw_fields(category="bottom", subcategory="trousers", color="gray"),
+    )
+    shoes_item_id = create_confirmed_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        headers=headers,
+        title="Patch shoes",
+        key_prefix="wear-mixed-patch-shoes",
+        raw_fields=build_raw_fields(category="shoes", subcategory="sneakers", color="white"),
+    )
+
+    outfit_response = client.post(
+        "/outfits",
+        headers=headers,
+        json={
+            "title": "Patch outfit",
+            "items": [
+                {"closet_item_id": str(top_item_id), "role": "top"},
+                {"closet_item_id": str(bottom_item_id), "role": "bottom"},
+            ],
+        },
+    )
+    assert outfit_response.status_code == 201
+    outfit_id = outfit_response.json()["id"]
+
+    create_response = create_wear_log(
+        client,
+        headers,
+        wear_date="2026-04-06",
+        outfit_id=outfit_id,
+    )
+    assert create_response.status_code == 201
+    wear_log_id = create_response.json()["id"]
+
+    patch_response = client.patch(
+        f"/wear-logs/{wear_log_id}",
+        headers=headers,
+        json={
+            "items": [
+                {"closet_item_id": str(shoes_item_id), "role": "shoes", "sort_index": 5},
+                {"closet_item_id": str(bottom_item_id), "role": "bottom", "sort_index": 0},
+            ]
+        },
+    )
+
+    assert patch_response.status_code == 200
+    body = patch_response.json()
+    assert body["source"] == "mixed"
+    assert body["linked_outfit"] is None
+    assert [item["closet_item_id"] for item in body["items"]] == [
+        str(bottom_item_id),
+        str(shoes_item_id),
+    ]
+
+    wear_log = db_session.execute(
+        select(WearLog).where(WearLog.id == UUID(wear_log_id))
+    ).scalar_one()
+    snapshot = db_session.execute(
+        select(WearLogSnapshot).where(WearLogSnapshot.wear_log_id == UUID(wear_log_id))
+    ).scalar_one()
+    assert wear_log.outfit_id is None
+    assert snapshot.outfit_title_snapshot is None

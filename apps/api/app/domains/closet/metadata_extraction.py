@@ -264,8 +264,7 @@ def resolve_gemini_endpoint(*, base_url: str, model: str) -> str:
 def build_extraction_prompt() -> str:
     categories = ", ".join(CATEGORY_SUBCATEGORIES.keys())
     subcategories = "; ".join(
-        f"{category}: {', '.join(options)}"
-        for category, options in CATEGORY_SUBCATEGORIES.items()
+        f"{category}: {', '.join(options)}" for category, options in CATEGORY_SUBCATEGORIES.items()
     )
     return (
         "You extract raw structured garment metadata from a single clothing-item image. "

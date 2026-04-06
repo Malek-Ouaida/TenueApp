@@ -327,11 +327,11 @@ def client(
     app.dependency_overrides[get_db_session] = override_get_db_session
     app.dependency_overrides[get_auth_provider] = lambda: fake_auth_provider
     app.dependency_overrides[get_storage_client] = lambda: fake_storage_client
-    app.dependency_overrides[get_background_removal_provider] = (
-        lambda: fake_background_removal_provider
+    app.dependency_overrides[get_background_removal_provider] = lambda: (
+        fake_background_removal_provider
     )
-    app.dependency_overrides[get_metadata_extraction_provider] = (
-        lambda: fake_metadata_extraction_provider
+    app.dependency_overrides[get_metadata_extraction_provider] = lambda: (
+        fake_metadata_extraction_provider
     )
 
     with TestClient(app) as test_client:
@@ -355,11 +355,11 @@ def client_without_storage_override(
 
     app.dependency_overrides[get_db_session] = override_get_db_session
     app.dependency_overrides[get_auth_provider] = lambda: fake_auth_provider
-    app.dependency_overrides[get_background_removal_provider] = (
-        lambda: fake_background_removal_provider
+    app.dependency_overrides[get_background_removal_provider] = lambda: (
+        fake_background_removal_provider
     )
-    app.dependency_overrides[get_metadata_extraction_provider] = (
-        lambda: fake_metadata_extraction_provider
+    app.dependency_overrides[get_metadata_extraction_provider] = lambda: (
+        fake_metadata_extraction_provider
     )
 
     with TestClient(app) as test_client:

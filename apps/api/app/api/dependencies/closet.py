@@ -141,9 +141,7 @@ def get_closet_review_service(
     normalization_service: Annotated[
         ClosetNormalizationService, Depends(get_closet_normalization_service)
     ],
-    similarity_service: Annotated[
-        ClosetSimilarityService, Depends(get_closet_similarity_service)
-    ],
+    similarity_service: Annotated[ClosetSimilarityService, Depends(get_closet_similarity_service)],
 ) -> ClosetReviewService:
     return ClosetReviewService(
         session=db_session,

@@ -16,6 +16,10 @@ from app.domains.closet.models import (
     ReviewStatus,
 )
 from app.domains.wear.models import (
+    Outfit,
+    OutfitItem,
+    OutfitSeason,
+    OutfitSource,
     WearContext,
     WearLog,
     WearLogItem,
@@ -28,11 +32,147 @@ class WearRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def create_outfit(
+        self,
+        *,
+        user_id: UUID,
+        title: str | None,
+        notes: str | None,
+        occasion: WearContext | None,
+        season: OutfitSeason | None,
+        source: OutfitSource,
+        is_favorite: bool,
+    ) -> Outfit:
+        outfit = Outfit(
+            user_id=user_id,
+            title=title,
+            notes=notes,
+            occasion=occasion,
+            season=season,
+            source=source,
+            is_favorite=is_favorite,
+        )
+        self.session.add(outfit)
+        self.session.flush()
+        return outfit
+
+    def get_outfit_for_user(self, *, outfit_id: UUID, user_id: UUID) -> Outfit | None:
+        statement = select(Outfit).where(
+            Outfit.id == outfit_id,
+            Outfit.user_id == user_id,
+        )
+        return self.session.execute(statement).scalar_one_or_none()
+
+    def get_outfits_for_user(
+        self,
+        *,
+        outfit_ids: list[UUID],
+        user_id: UUID,
+    ) -> dict[UUID, Outfit]:
+        if not outfit_ids:
+            return {}
+        statement = select(Outfit).where(
+            Outfit.user_id == user_id,
+            Outfit.id.in_(outfit_ids),
+        )
+        return {outfit.id: outfit for outfit in self.session.execute(statement).scalars()}
+
+    def list_outfits(
+        self,
+        *,
+        user_id: UUID,
+        offset: int,
+        limit: int,
+        occasion: WearContext | None,
+        season: OutfitSeason | None,
+        is_favorite: bool | None,
+        source: OutfitSource | None,
+        include_archived: bool,
+    ) -> list[Outfit]:
+        statement = select(Outfit).where(Outfit.user_id == user_id)
+
+        if not include_archived:
+            statement = statement.where(Outfit.archived_at.is_(None))
+
+        if occasion is not None:
+            statement = statement.where(Outfit.occasion == occasion)
+        if season is not None:
+            statement = statement.where(Outfit.season == season)
+        if is_favorite is not None:
+            statement = statement.where(Outfit.is_favorite.is_(is_favorite))
+        if source is not None:
+            statement = statement.where(Outfit.source == source)
+
+        statement = statement.order_by(
+            Outfit.updated_at.desc(),
+            Outfit.created_at.desc(),
+            Outfit.id.desc(),
+        ).offset(offset).limit(limit)
+        return list(self.session.execute(statement).scalars())
+
+    def create_outfit_items(
+        self,
+        *,
+        outfit_id: UUID,
+        items: list[dict[str, object]],
+    ) -> list[OutfitItem]:
+        created: list[OutfitItem] = []
+        for item in items:
+            outfit_item = OutfitItem(
+                outfit_id=outfit_id,
+                closet_item_id=item["closet_item_id"],
+                role=item["role"],
+                layer_index=item["layer_index"],
+                sort_index=item["sort_index"],
+                is_optional=item["is_optional"],
+            )
+            self.session.add(outfit_item)
+            created.append(outfit_item)
+        self.session.flush()
+        return created
+
+    def replace_outfit_items(
+        self,
+        *,
+        outfit_id: UUID,
+        items: list[dict[str, object]],
+    ) -> list[OutfitItem]:
+        self.session.execute(delete(OutfitItem).where(OutfitItem.outfit_id == outfit_id))
+        self.session.flush()
+        return self.create_outfit_items(outfit_id=outfit_id, items=items)
+
+    def list_outfit_items(self, *, outfit_id: UUID) -> list[OutfitItem]:
+        statement = (
+            select(OutfitItem)
+            .where(OutfitItem.outfit_id == outfit_id)
+            .order_by(OutfitItem.sort_index.asc(), OutfitItem.id.asc())
+        )
+        return list(self.session.execute(statement).scalars())
+
+    def list_outfit_items_for_outfits(
+        self,
+        *,
+        outfit_ids: list[UUID],
+    ) -> dict[UUID, list[OutfitItem]]:
+        if not outfit_ids:
+            return {}
+
+        statement = (
+            select(OutfitItem)
+            .where(OutfitItem.outfit_id.in_(outfit_ids))
+            .order_by(OutfitItem.outfit_id.asc(), OutfitItem.sort_index.asc(), OutfitItem.id.asc())
+        )
+        items_by_outfit: dict[UUID, list[OutfitItem]] = {}
+        for item in self.session.execute(statement).scalars():
+            items_by_outfit.setdefault(item.outfit_id, []).append(item)
+        return items_by_outfit
+
     def create_wear_log(
         self,
         *,
         user_id: UUID,
         wear_date: date,
+        outfit_id: UUID | None,
         source: WearLogSource,
         context: WearContext | None,
         notes: str | None,
@@ -41,6 +181,7 @@ class WearRepository:
         wear_log = WearLog(
             user_id=user_id,
             wear_date=wear_date,
+            outfit_id=outfit_id,
             source=source,
             context=context,
             notes=notes,
@@ -181,8 +322,7 @@ class WearRepository:
             return {}
         statement = select(WearLogSnapshot).where(WearLogSnapshot.wear_log_id.in_(wear_log_ids))
         return {
-            snapshot.wear_log_id: snapshot
-            for snapshot in self.session.execute(statement).scalars()
+            snapshot.wear_log_id: snapshot for snapshot in self.session.execute(statement).scalars()
         }
 
     def upsert_wear_log_snapshot(
@@ -190,15 +330,18 @@ class WearRepository:
         *,
         wear_log_id: UUID,
         items_snapshot_json: list[dict[str, object]],
+        outfit_title_snapshot: str | None,
     ) -> WearLogSnapshot:
         snapshot = self.get_wear_log_snapshot(wear_log_id=wear_log_id)
         if snapshot is None:
             snapshot = WearLogSnapshot(
                 wear_log_id=wear_log_id,
+                outfit_title_snapshot=outfit_title_snapshot,
                 items_snapshot_json=items_snapshot_json,
             )
             self.session.add(snapshot)
         else:
+            snapshot.outfit_title_snapshot = outfit_title_snapshot
             snapshot.items_snapshot_json = items_snapshot_json
         self.session.flush()
         return snapshot
@@ -232,6 +375,32 @@ class WearRepository:
                 ClosetItem.lifecycle_status == LifecycleStatus.CONFIRMED,
                 ClosetItem.review_status == ReviewStatus.CONFIRMED,
                 ClosetItem.confirmed_at.is_not(None),
+                ClosetItemMetadataProjection.user_id == user_id,
+            )
+        )
+        return {
+            item.id: (item, projection)
+            for item, projection in self.session.execute(statement).all()
+        }
+
+    def get_closet_items_with_projections_for_user(
+        self,
+        *,
+        item_ids: list[UUID],
+        user_id: UUID,
+    ) -> dict[UUID, tuple[ClosetItem, ClosetItemMetadataProjection]]:
+        if not item_ids:
+            return {}
+
+        statement = (
+            select(ClosetItem, ClosetItemMetadataProjection)
+            .join(
+                ClosetItemMetadataProjection,
+                ClosetItemMetadataProjection.closet_item_id == ClosetItem.id,
+            )
+            .where(
+                ClosetItem.id.in_(item_ids),
+                ClosetItem.user_id == user_id,
                 ClosetItemMetadataProjection.user_id == user_id,
             )
         )
