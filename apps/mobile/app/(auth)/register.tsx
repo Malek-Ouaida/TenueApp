@@ -1,16 +1,10 @@
 import { Link, router } from "expo-router";
-import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View
-} from "react-native";
+import { StyleSheet, View } from "react-native";
 
 import { useAuth } from "../../src/auth/provider";
+import { colors, spacing } from "../../src/theme";
+import { AppText, BrandMark, Button, Card, Screen, TextField } from "../../src/ui";
 
 export default function RegisterScreen() {
   const { registerWithPassword } = useAuth();
@@ -43,129 +37,81 @@ export default function RegisterScreen() {
   }
 
   return (
-    <View style={styles.screen}>
-      <StatusBar style="dark" />
-      <Text style={styles.eyebrow}>Phase 3.2</Text>
-      <Text style={styles.title}>Create your account</Text>
-      <Text style={styles.copy}>
-        Keep the auth slice minimal and practical. This phase only establishes identity and sessions.
-      </Text>
+    <Screen scrollable={false}>
+      <View style={styles.authShell}>
+        <BrandMark />
+        <Card tone="soft" style={styles.heroCard}>
+          <AppText color={colors.textSubtle} variant="eyebrow">
+            Closet-first setup
+          </AppText>
+          <AppText variant="display">Capture once. Review calmly. Confirm with intention.</AppText>
+          <AppText color={colors.textMuted}>
+            Create your Tenue account to keep uploads private, preserve review state, and build a
+            wardrobe that downstream intelligence can actually trust.
+          </AppText>
+        </Card>
 
-      <View style={styles.form}>
-        <TextInput
-          autoCapitalize="none"
-          autoComplete="email"
-          keyboardType="email-address"
-          placeholder="Email"
-          placeholderTextColor="#8b7e70"
-          style={styles.input}
-          value={email}
-          onChangeText={setEmail}
-        />
-        <TextInput
-          autoCapitalize="none"
-          autoComplete="new-password"
-          placeholder="Password"
-          placeholderTextColor="#8b7e70"
-          secureTextEntry
-          style={styles.input}
-          value={password}
-          onChangeText={setPassword}
-        />
+        <Card tone="soft" style={styles.formCard}>
+          <TextField
+            autoCapitalize="none"
+            autoComplete="email"
+            keyboardType="email-address"
+            label="Email"
+            placeholder="you@example.com"
+            value={email}
+            onChangeText={setEmail}
+          />
+          <TextField
+            autoCapitalize="none"
+            autoComplete="new-password"
+            helper="Use a password you can keep on this device while testing the mobile flow."
+            label="Password"
+            placeholder="Password"
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+          />
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+          {error ? (
+            <AppText color={colors.danger} variant="caption">
+              {error}
+            </AppText>
+          ) : null}
+          {notice ? (
+            <AppText color={colors.success} variant="caption">
+              {notice}
+            </AppText>
+          ) : null}
 
-        <Pressable style={styles.primaryButton} onPress={() => void handleSubmit()} disabled={isSubmitting}>
-          {isSubmitting ? (
-            <ActivityIndicator color="#fcfaf6" />
-          ) : (
-            <Text style={styles.primaryButtonLabel}>Create account</Text>
-          )}
-        </Pressable>
+          <Button label="Create Account" loading={isSubmitting} onPress={() => void handleSubmit()} />
+
+          <AppText color={colors.textMuted} variant="caption">
+            Already registered?{" "}
+            <Link href="/login" style={styles.link}>
+              Sign in
+            </Link>
+          </AppText>
+        </Card>
       </View>
-
-      <Text style={styles.secondaryCopy}>
-        Already registered?{" "}
-        <Link href="/login" style={styles.link}>
-          Sign in
-        </Link>
-      </Text>
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
+  authShell: {
     flex: 1,
-    justifyContent: "center",
-    paddingHorizontal: 24,
-    backgroundColor: "#f6f2eb"
+    justifyContent: "space-between",
+    paddingBottom: spacing.xl
   },
-  eyebrow: {
-    marginBottom: 10,
-    color: "#8b6f48",
-    fontSize: 13,
-    fontWeight: "700",
-    letterSpacing: 2.4,
-    textTransform: "uppercase"
+  heroCard: {
+    marginTop: spacing.xl,
+    gap: spacing.md
   },
-  title: {
-    color: "#1f1a15",
-    fontSize: 34,
-    fontWeight: "700",
-    marginBottom: 12
-  },
-  copy: {
-    color: "#564b3f",
-    fontSize: 16,
-    lineHeight: 24,
-    marginBottom: 28,
-    maxWidth: 320
-  },
-  form: {
-    gap: 12
-  },
-  input: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "rgba(31, 26, 21, 0.08)",
-    backgroundColor: "rgba(255, 255, 255, 0.82)",
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    color: "#1f1a15",
-    fontSize: 16
-  },
-  error: {
-    color: "#a53f33",
-    fontSize: 14,
-    lineHeight: 20
-  },
-  notice: {
-    color: "#2f6f54",
-    fontSize: 14,
-    lineHeight: 20
-  },
-  primaryButton: {
-    marginTop: 8,
-    minHeight: 56,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 18,
-    backgroundColor: "#1f1a15"
-  },
-  primaryButtonLabel: {
-    color: "#fcfaf6",
-    fontSize: 16,
-    fontWeight: "700"
-  },
-  secondaryCopy: {
-    marginTop: 24,
-    color: "#564b3f",
-    fontSize: 15
+  formCard: {
+    gap: spacing.md
   },
   link: {
-    color: "#8b6f48",
-    fontWeight: "700"
+    color: colors.text,
+    fontFamily: "Manrope_700Bold"
   }
 });

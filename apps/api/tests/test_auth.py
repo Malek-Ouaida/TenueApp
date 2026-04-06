@@ -58,6 +58,21 @@ def test_login_reuses_existing_user(client: TestClient) -> None:
     assert response.json()["user"]["id"] == first_user_id
 
 
+def test_login_preflight_allows_local_expo_web_origin(client: TestClient) -> None:
+    response = client.options(
+        "/auth/login",
+        headers={
+            "Origin": "http://localhost:8081",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:8081"
+    assert "POST" in response.headers["access-control-allow-methods"]
+
+
 def test_me_returns_current_user(client: TestClient) -> None:
     register_response = client.post(
         "/auth/register",

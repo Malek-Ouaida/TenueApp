@@ -7,13 +7,14 @@ type ApiRequestOptions = {
 };
 
 type ErrorPayload = {
-  detail?: string;
+  detail?: string | { code?: string; message?: string };
 };
 
 export class ApiError extends Error {
   constructor(
     message: string,
-    readonly status: number
+    readonly status: number,
+    readonly code?: string
   ) {
     super(message);
     this.name = "ApiError";
@@ -41,17 +42,25 @@ export async function apiRequest<T>(
 
   if (!response.ok) {
     let message = "Request failed.";
+    let code: string | undefined;
 
     try {
       const payload = (await response.json()) as ErrorPayload;
-      if (payload.detail) {
+      if (typeof payload.detail === "string") {
         message = payload.detail;
+      } else if (payload.detail?.message) {
+        message = payload.detail.message;
+        code = payload.detail.code;
       }
     } catch {
       message = "Request failed.";
     }
 
-    throw new ApiError(message, response.status);
+    throw new ApiError(message, response.status, code);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   return (await response.json()) as T;

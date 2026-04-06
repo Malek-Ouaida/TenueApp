@@ -10,6 +10,7 @@ CLOSET_UPLOAD_MAX_HEIGHT = 8000
 CLOSET_UPLOAD_INTENT_TTL_SECONDS = 15 * 60
 DEFAULT_PHOTOROOM_BASE_URL = "https://sdk.photoroom.com/v1/segment"
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+DEFAULT_DEV_CORS_ALLOW_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
 load_project_env()
 
@@ -18,6 +19,8 @@ load_project_env()
 class Settings:
     app_name: str
     environment: str
+    cors_allowed_origins: tuple[str, ...]
+    cors_allow_origin_regex: str | None
     database_target: str
     database_url: str
     database_source: str
@@ -56,11 +59,47 @@ def load_supabase_client_key() -> str:
     return os.getenv("SUPABASE_ANON_KEY", "").strip()
 
 
+def load_cors_allowed_origins() -> tuple[str, ...]:
+    configured_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    if not configured_origins.strip():
+        return ()
+
+    seen: set[str] = set()
+    normalized_origins: list[str] = []
+
+    for origin in configured_origins.split(","):
+        normalized_origin = origin.strip().rstrip("/")
+        if not normalized_origin or normalized_origin in seen:
+            continue
+
+        normalized_origins.append(normalized_origin)
+        seen.add(normalized_origin)
+
+    return tuple(normalized_origins)
+
+
+def load_cors_allow_origin_regex(*, environment: str) -> str | None:
+    configured_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX", "").strip()
+    if configured_regex:
+        return configured_regex
+
+    if environment.strip().lower() == "development":
+        return DEFAULT_DEV_CORS_ALLOW_ORIGIN_REGEX
+
+    return None
+
+
 def load_settings() -> Settings:
     database_target = resolve_database_target()
+    environment = os.getenv("APP_ENV", os.getenv("TENUE_ENV", "development")).strip()
+    if not environment:
+        environment = "development"
+
     return Settings(
         app_name=os.getenv("APP_NAME", "Tenue API"),
-        environment=os.getenv("APP_ENV", os.getenv("TENUE_ENV", "development")),
+        environment=environment,
+        cors_allowed_origins=load_cors_allowed_origins(),
+        cors_allow_origin_regex=load_cors_allow_origin_regex(environment=environment),
         database_target=database_target.target,
         database_url=database_target.database_url,
         database_source=database_target.source,
