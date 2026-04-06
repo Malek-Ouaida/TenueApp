@@ -7,10 +7,29 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Tenue uses your photo library so you can add closet item images.",
+          "cameraPermission": "Tenue uses your camera so you can capture closet item images."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "31d7250e-f140-478c-98f4-d4ae23e82e8c"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.malekouaida.tenuemobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     }
   }
 }

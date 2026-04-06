@@ -1,16 +1,19 @@
 import { useEffect } from "react";
 import { Stack, useRouter, useSegments } from "expo-router";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
 
 import { AuthProvider, useAuth } from "../src/auth/provider";
+import { colors, useAppFonts } from "../src/theme";
+import { AppText, BrandMark } from "../src/ui";
 
 function RootNavigator() {
   const { status } = useAuth();
   const router = useRouter();
   const segments = useSegments();
+  const [fontsLoaded] = useAppFonts();
 
   useEffect(() => {
-    if (status === "loading") {
+    if (status === "loading" || !fontsLoaded) {
       return;
     }
 
@@ -24,13 +27,23 @@ function RootNavigator() {
     if (status === "authenticated" && isAuthRoute) {
       router.replace("/");
     }
-  }, [router, segments, status]);
+  }, [fontsLoaded, router, segments, status]);
 
-  if (status === "loading") {
+  if (status === "loading" || !fontsLoaded) {
     return (
       <View style={styles.loadingScreen}>
-        <ActivityIndicator color="#1f1a15" size="large" />
-        <Text style={styles.loadingCopy}>Restoring your Tenue session…</Text>
+        <BrandMark />
+        <View style={styles.loadingCopy}>
+          <AppText color={colors.textSubtle} variant="eyebrow">
+            Preparing your closet
+          </AppText>
+          <AppText variant="display">Loading Tenue.</AppText>
+          <AppText color={colors.textMuted}>
+            Restoring your session, loading the light-mode design system, and bringing the closet
+            shell back into focus.
+          </AppText>
+        </View>
+        <ActivityIndicator color={colors.text} size="large" />
       </View>
     );
   }
@@ -40,7 +53,7 @@ function RootNavigator() {
       screenOptions={{
         headerShown: false,
         contentStyle: {
-          backgroundColor: "#f6f2eb"
+          backgroundColor: colors.background
         }
       }}
     />
@@ -60,11 +73,12 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: 14,
-    backgroundColor: "#f6f2eb"
+    gap: 18,
+    paddingHorizontal: 28,
+    backgroundColor: colors.background
   },
   loadingCopy: {
-    color: "#564b3f",
-    fontSize: 16
+    gap: 8,
+    alignItems: "center"
   }
 });
