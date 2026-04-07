@@ -1,5 +1,11 @@
-import { File } from "expo-file-system";
+import {
+  EncodingType,
+  getInfoAsync,
+  readAsStringAsync,
+  uploadAsync
+} from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
+import { Platform } from "react-native";
 
 import type { ClosetDraftSnapshot } from "./types";
 import {
@@ -19,12 +25,12 @@ export type UploadIdempotencyPath = {
 };
 
 export type PreparedUploadAsset = {
-  file: File;
   uri: string;
   filename: string;
   file_size: number;
   mime_type: string;
   sha256: string;
+  web_upload_body?: Uint8Array;
 };
 
 type NativeCryptoHost = {
@@ -154,8 +160,101 @@ function inferMimeType(asset: ImagePicker.ImagePickerAsset, filename: string) {
   return null;
 }
 
-async function hashFileSha256(file: File) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+function inferFilenameFromUri(uri: string) {
+  const sanitized = uri.split("?")[0]?.split("#")[0] ?? "";
+  const rawName = sanitized.split("/").pop()?.trim() ?? "";
+
+  if (!rawName) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(rawName);
+  } catch {
+    return rawName;
+  }
+}
+
+function decodeBase64(base64: string) {
+  const normalized = base64.replace(/\s+/g, "");
+  if (!normalized) {
+    return new Uint8Array(0);
+  }
+
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const lookup = new Int16Array(256).fill(-1);
+  for (let index = 0; index < alphabet.length; index += 1) {
+    lookup[alphabet.charCodeAt(index)] = index;
+  }
+  lookup["=".charCodeAt(0)] = 0;
+
+  const padding = normalized.endsWith("==") ? 2 : normalized.endsWith("=") ? 1 : 0;
+  const outputLength = Math.floor((normalized.length * 3) / 4) - padding;
+  const output = new Uint8Array(outputLength);
+
+  let outputOffset = 0;
+  for (let index = 0; index < normalized.length; index += 4) {
+    const char0 = normalized.charCodeAt(index);
+    const char1 = normalized.charCodeAt(index + 1);
+    const char2 = normalized.charCodeAt(index + 2);
+    const char3 = normalized.charCodeAt(index + 3);
+
+    const value0 = lookup[char0] ?? -1;
+    const value1 = lookup[char1] ?? -1;
+    const value2 = lookup[char2] ?? -1;
+    const value3 = lookup[char3] ?? -1;
+
+    if (value0 < 0 || value1 < 0 || value2 < 0 || value3 < 0) {
+      throw new Error("The selected image could not be decoded.");
+    }
+
+    const combined = (value0 << 18) | (value1 << 12) | (value2 << 6) | value3;
+
+    output[outputOffset] = (combined >> 16) & 0xff;
+    outputOffset += 1;
+
+    if (normalized[index + 2] !== "=" && outputOffset < output.length) {
+      output[outputOffset] = (combined >> 8) & 0xff;
+      outputOffset += 1;
+    }
+
+    if (normalized[index + 3] !== "=" && outputOffset < output.length) {
+      output[outputOffset] = combined & 0xff;
+      outputOffset += 1;
+    }
+  }
+
+  return output;
+}
+
+async function readAssetBytes(uri: string) {
+  const base64 = await readAsStringAsync(uri, { encoding: EncodingType.Base64 });
+  return decodeBase64(base64);
+}
+
+async function readWebAssetData(asset: ImagePicker.ImagePickerAsset) {
+  const file = asset.file;
+  if (file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return {
+      bytes,
+      fileSize: asset.fileSize ?? file.size
+    };
+  }
+
+  const response = await fetch(asset.uri);
+  if (!response.ok) {
+    throw new Error("The selected image could not be read.");
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  return {
+    bytes,
+    fileSize: asset.fileSize ?? bytes.byteLength
+  };
+}
+
+async function hashBytesSha256(bytes: Uint8Array) {
   const nativeDigest = await getNativeCryptoHost()?.subtle?.digest("SHA-256", bytes);
 
   return Array.from(new Uint8Array(nativeDigest ?? sha256ArrayBuffer(bytes)))
@@ -261,15 +360,45 @@ function sha256ArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 }
 
 export async function prepareUploadAsset(asset: ImagePicker.ImagePickerAsset): Promise<PreparedUploadAsset> {
-  const file = new File(asset.uri);
-  const filename = asset.fileName?.trim() || file.name || `closet-item-${Date.now()}.jpg`;
+  if (!asset.uri) {
+    throw new Error("The selected image is missing a readable file path.");
+  }
+
+  const filename =
+    asset.fileName?.trim() || inferFilenameFromUri(asset.uri) || `closet-item-${Date.now()}.jpg`;
   const mimeType = inferMimeType(asset, filename);
 
   if (!mimeType) {
     throw new Error("Only JPEG, PNG, and WEBP images are supported.");
   }
 
-  const fileSize = asset.fileSize ?? file.size;
+  if (Platform.OS === "web") {
+    const { bytes, fileSize } = await readWebAssetData(asset);
+
+    if (!fileSize) {
+      throw new Error("The selected image could not be read.");
+    }
+
+    if (fileSize > maxUploadSizeBytes) {
+      throw new Error("The selected image exceeds the 15 MB mobile upload limit.");
+    }
+
+    return {
+      uri: asset.uri,
+      filename,
+      file_size: fileSize,
+      mime_type: mimeType,
+      sha256: await hashBytesSha256(bytes),
+      web_upload_body: bytes
+    };
+  }
+
+  const fileInfo = await getInfoAsync(asset.uri);
+  if (!fileInfo.exists || fileInfo.isDirectory) {
+    throw new Error("The selected image could not be read.");
+  }
+
+  const fileSize = asset.fileSize ?? fileInfo.size;
   if (!fileSize) {
     throw new Error("The selected image could not be read.");
   }
@@ -278,13 +407,14 @@ export async function prepareUploadAsset(asset: ImagePicker.ImagePickerAsset): P
     throw new Error("The selected image exceeds the 15 MB mobile upload limit.");
   }
 
+  const bytes = await readAssetBytes(asset.uri);
+
   return {
-    file,
     uri: asset.uri,
     filename,
     file_size: fileSize,
     mime_type: mimeType,
-    sha256: await hashFileSha256(file)
+    sha256: await hashBytesSha256(bytes)
   };
 }
 
@@ -292,13 +422,31 @@ export async function uploadFileToPresignedUrl(
   preparedAsset: PreparedUploadAsset,
   descriptor: { method: string; url: string; headers: Record<string, string> }
 ) {
-  const response = await fetch(descriptor.url, {
-    method: descriptor.method,
+  const method = descriptor.method.toUpperCase();
+  if (method !== "POST" && method !== "PUT" && method !== "PATCH") {
+    throw new Error("Tenue returned an unsupported upload method.");
+  }
+
+  if (Platform.OS === "web") {
+    const response = await fetch(descriptor.url, {
+      method,
+      headers: descriptor.headers,
+      body: preparedAsset.web_upload_body
+    });
+
+    if (!response.ok) {
+      throw new Error("Image upload failed before Tenue could process it.");
+    }
+
+    return;
+  }
+
+  const response = await uploadAsync(descriptor.url, preparedAsset.uri, {
     headers: descriptor.headers,
-    body: preparedAsset.file
+    httpMethod: method
   });
 
-  if (!response.ok) {
+  if (response.status < 200 || response.status >= 300) {
     throw new Error("Image upload failed before Tenue could process it.");
   }
 }

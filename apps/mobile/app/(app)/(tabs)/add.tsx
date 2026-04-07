@@ -27,7 +27,6 @@ export default function AddScreen() {
       }
 
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace(`/review/${draft.id}` as Href);
     } catch {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
@@ -41,7 +40,6 @@ export default function AddScreen() {
       }
 
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace(`/review/${draft.id}` as Href);
     } catch {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
@@ -89,6 +87,19 @@ export default function AddScreen() {
               Upload status
             </AppText>
             <AppText variant="bodyStrong">{upload.stage}</AppText>
+            {upload.stage === "Sent to processing" ? (
+              <>
+                <AppText color={colors.textMuted}>
+                  Keep uploading. Tenue will move ready items into confirmation automatically.
+                </AppText>
+                <Button
+                  label="Open Processing"
+                  onPress={() => router.push("/closet?tab=processing" as Href)}
+                  size="sm"
+                  variant="secondary"
+                />
+              </>
+            ) : null}
           </View>
         ) : null}
         {upload.error ? (

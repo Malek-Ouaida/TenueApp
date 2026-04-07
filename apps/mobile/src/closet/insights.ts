@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { apiRequest } from "../lib/api";
 import { getConfirmedClosetItems } from "./client";
 import type { ClosetBrowseListItemSnapshot } from "./types";
 
@@ -18,6 +19,32 @@ export type ClosetInsightsSnapshot = {
   colorMix: ClosetInsightMetric[];
   materialMix: ClosetInsightMetric[];
   recentItems: ClosetBrowseListItemSnapshot[];
+};
+
+export type ClosetItemUsageSort = "most_worn" | "least_worn";
+
+export type ClosetItemUsageSnapshot = {
+  closet_item_id: string;
+  title: string | null;
+  category: string | null;
+  subcategory: string | null;
+  primary_color: string | null;
+  display_image: ClosetBrowseListItemSnapshot["display_image"];
+  thumbnail_image: ClosetBrowseListItemSnapshot["thumbnail_image"];
+  wear_count: number;
+  first_worn_date: string;
+  last_worn_date: string;
+};
+
+type ClosetItemUsageResponse = {
+  items: ClosetItemUsageSnapshot[];
+  next_cursor: string | null;
+};
+
+export type ClosetItemUsageIndexSnapshot = {
+  byItemId: Record<string, ClosetItemUsageSnapshot>;
+  items: ClosetItemUsageSnapshot[];
+  mostWornItemId: string | null;
 };
 
 export function buildClosetInsights(
@@ -60,6 +87,31 @@ function countValues(values: Array<string | null | undefined>): ClosetInsightMet
 
       return left.label.localeCompare(right.label);
     });
+}
+
+async function getClosetItemUsagePage(
+  accessToken: string,
+  params: {
+    cursor?: string | null;
+    limit?: number;
+    sort?: ClosetItemUsageSort;
+  } = {}
+) {
+  const searchParams = new URLSearchParams();
+
+  if (params.cursor) {
+    searchParams.set("cursor", params.cursor);
+  }
+  if (params.limit) {
+    searchParams.set("limit", String(params.limit));
+  }
+  searchParams.set("sort", params.sort ?? "most_worn");
+
+  return apiRequest<ClosetItemUsageResponse>(`/insights/items?${searchParams.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
 }
 
 export function useClosetInsights(
@@ -139,5 +191,102 @@ export function useClosetInsights(
     insights,
     isLoading,
     items
+  };
+}
+
+export function useClosetItemUsageIndex(
+  accessToken?: string | null,
+  options: { maxItems?: number; pageSize?: number; sort?: ClosetItemUsageSort } = {}
+) {
+  const maxItems = options.maxItems ?? 80;
+  const pageSize = options.pageSize ?? 20;
+  const sort = options.sort ?? "most_worn";
+  const [snapshot, setSnapshot] = useState<ClosetItemUsageIndexSnapshot>({
+    byItemId: {},
+    items: [],
+    mostWornItemId: null
+  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
+      if (!accessToken) {
+        setSnapshot({
+          byItemId: {},
+          items: [],
+          mostWornItemId: null
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const collected: ClosetItemUsageSnapshot[] = [];
+        let cursor: string | null | undefined = null;
+
+        while (active && collected.length < maxItems) {
+          const response = await getClosetItemUsagePage(accessToken, {
+            cursor,
+            limit: Math.min(pageSize, maxItems - collected.length),
+            sort
+          });
+
+          collected.push(...response.items);
+
+          if (!response.next_cursor) {
+            break;
+          }
+
+          cursor = response.next_cursor;
+        }
+
+        if (!active) {
+          return;
+        }
+
+        const byItemId = Object.fromEntries(
+          collected.map((item) => [item.closet_item_id, item])
+        );
+
+        setSnapshot({
+          byItemId,
+          items: collected,
+          mostWornItemId: collected[0]?.closet_item_id ?? null
+        });
+      } catch (loadError) {
+        if (!active) {
+          return;
+        }
+
+        setError(loadError instanceof Error ? loadError.message : "Item usage could not be loaded.");
+        setSnapshot({
+          byItemId: {},
+          items: [],
+          mostWornItemId: null
+        });
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void load();
+
+    return () => {
+      active = false;
+    };
+  }, [accessToken, maxItems, pageSize, sort]);
+
+  return {
+    error,
+    isLoading,
+    snapshot
   };
 }

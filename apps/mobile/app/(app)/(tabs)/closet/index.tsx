@@ -1,305 +1,641 @@
+import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { router, type Href } from "expo-router";
-import { useState } from "react";
-import { Pressable, StyleSheet, TextInput, View } from "react-native";
+import { router, useFocusEffect, useLocalSearchParams, type Href } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View
+} from "react-native";
 
 import { useAuth } from "../../../../src/auth/provider";
-import { useClosetMetadataOptions, useConfirmedClosetBrowse } from "../../../../src/closet/hooks";
-import { buildBrowseMeta, buildClosetFilterSummary } from "../../../../src/closet/status";
-import { useDebouncedValue } from "../../../../src/lib/hooks";
-import { colors, radius, spacing } from "../../../../src/theme";
+import { ProcessingTab } from "../../../../src/closet/ProcessingTab";
 import {
-  AppText,
-  BrandMark,
-  Button,
-  Card,
-  Chip,
-  EmptyState,
-  ModalSheet,
-  Screen,
-  SkeletonBlock
-} from "../../../../src/ui";
+  prefetchClosetReviewItem,
+  useReviewQueue,
+  useConfirmedClosetBrowse,
+  useClosetMetadataOptions
+} from "../../../../src/closet/hooks";
+import {
+  useClosetItemUsageIndex
+} from "../../../../src/closet/insights";
+import { isReviewableDraft } from "../../../../src/closet/status";
+import { useDebouncedValue, usePolling } from "../../../../src/lib/hooks";
+import { humanizeEnum } from "../../../../src/lib/format";
+import { colors, fontFamilies } from "../../../../src/theme";
+import { AppText, EmptyState, ModalSheet, Screen, SkeletonBlock } from "../../../../src/ui";
 
-type SortOption = "newest" | "alphabetical" | "category";
+const palette = {
+  cream: "#FAF9F7",
+  warmWhite: "#FFFFFF",
+  darkText: "#0F172A",
+  warmGray: "#64748B",
+  muted: "#94A3B8",
+  subtle: "#CBD5E1",
+  border: "#E2E8F0",
+  chipBorder: "#F1F0EE",
+  cardShadow: "rgba(15, 23, 42, 0.06)",
+  coral: "#FF6B6B",
+  coralSurface: "#FFF1F1",
+  sageSurface: "#F0FDF4",
+  butter: colors.butter,
+  lavender: colors.lavender
+} as const;
 
-const emptyFilters = {
-  category: "",
-  subcategory: "",
-  color: "",
-  material: "",
-  pattern: ""
+type SortOption = "newest" | "oldest" | "most_worn" | "least_worn" | "recently_worn";
+
+const categories = [
+  { id: "all", label: "All" },
+  { id: "tops", label: "Tops" },
+  { id: "bottoms", label: "Bottoms" },
+  { id: "dresses", label: "Dresses" },
+  { id: "outerwear", label: "Outerwear" },
+  { id: "shoes", label: "Shoes" },
+  { id: "bags", label: "Bags" },
+  { id: "accessories", label: "Accessories" }
+] as const;
+
+const sortLabels: Record<SortOption, string> = {
+  newest: "Newest first",
+  oldest: "Oldest first",
+  most_worn: "Most worn",
+  least_worn: "Least worn",
+  recently_worn: "Recently worn"
 };
 
+function getDaysSince(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = new Date(value).getTime();
+  return Math.max(0, Math.round((Date.now() - timestamp) / (1000 * 60 * 60 * 24)));
+}
+
+function buildItemTag(
+  itemId: string,
+  confirmedAt: string,
+  wearCount: number,
+  mostWornItemId: string | null,
+  lastWornDate: string | null | undefined
+) {
+  if (itemId === mostWornItemId && wearCount > 0) {
+    return "Most worn";
+  }
+
+  const addedDaysAgo = getDaysSince(confirmedAt);
+  if (addedDaysAgo != null && addedDaysAgo <= 7) {
+    return "Recently added";
+  }
+
+  if (wearCount === 0) {
+    return "Ready to style";
+  }
+
+  const lastWornDaysAgo = getDaysSince(lastWornDate);
+  if (lastWornDaysAgo != null && lastWornDaysAgo <= 3) {
+    return `Last worn ${lastWornDaysAgo}d ago`;
+  }
+
+  return null;
+}
+
+function getMaterialOptions(materials: string[]) {
+  return ["All", ...materials.slice(0, 10)];
+}
+
+function getColorOptions(colorsList: string[]) {
+  return ["All", ...colorsList.slice(0, 12)];
+}
+
 export default function ClosetBrowseScreen() {
+  const params = useLocalSearchParams<{ tab?: string | string[] }>();
+  const requestedTab = Array.isArray(params.tab) ? params.tab[0] : params.tab;
+  const closetRefreshRef = useRef<() => Promise<void>>(async () => {});
+  const reviewRefreshRef = useRef<() => Promise<void>>(async () => {});
   const { session } = useAuth();
   const metadata = useClosetMetadataOptions(session?.access_token);
+  const reviewQueue = useReviewQueue(session?.access_token);
+  const usageIndex = useClosetItemUsageIndex(session?.access_token);
+
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<SortOption>("newest");
-  const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [draftFilters, setDraftFilters] = useState(emptyFilters);
-  const [filters, setFilters] = useState(emptyFilters);
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<SortOption>("newest");
+  const [draftSortBy, setDraftSortBy] = useState<SortOption>("newest");
+  const [appliedColor, setAppliedColor] = useState("All");
+  const [draftColor, setDraftColor] = useState("All");
+  const [appliedMaterial, setAppliedMaterial] = useState("All");
+  const [draftMaterial, setDraftMaterial] = useState("All");
+  const [showFilter, setShowFilter] = useState(false);
+  const [activeTab, setActiveTab] = useState<"closet" | "processing">(
+    requestedTab === "processing" ? "processing" : "closet"
+  );
+
   const debouncedQuery = useDebouncedValue(query, 250);
-  const closet = useConfirmedClosetBrowse(session?.access_token, {
-    query: debouncedQuery,
-    ...filters
-  });
+  const closet = useConfirmedClosetBrowse(
+    session?.access_token,
+    {
+      query: debouncedQuery,
+      category: selectedCategory === "all" ? "" : selectedCategory,
+      color: appliedColor === "All" ? "" : appliedColor,
+      material: appliedMaterial === "All" ? "" : appliedMaterial
+    },
+    50
+  );
 
-  const categoryOptions = metadata.data?.categories ?? [];
-  const filterSummary = buildClosetFilterSummary(filters);
-  const subcategoryOptions =
-    categoryOptions.find((category) => category.name === draftFilters.category)?.subcategories ??
-    categoryOptions.flatMap((category) => category.subcategories);
+  const sortedItems = useMemo(() => {
+    const usageByItemId = usageIndex.snapshot.byItemId;
 
-  const sortedItems = [...closet.items].sort((left, right) => {
-    if (sort === "alphabetical") {
-      return (left.title ?? "").localeCompare(right.title ?? "");
+    return [...closet.items].sort((left, right) => {
+      const leftUsage = usageByItemId[left.item_id];
+      const rightUsage = usageByItemId[right.item_id];
+
+      if (sortBy === "oldest") {
+        return new Date(left.confirmed_at).getTime() - new Date(right.confirmed_at).getTime();
+      }
+
+      if (sortBy === "most_worn") {
+        return (rightUsage?.wear_count ?? 0) - (leftUsage?.wear_count ?? 0);
+      }
+
+      if (sortBy === "least_worn") {
+        return (leftUsage?.wear_count ?? 0) - (rightUsage?.wear_count ?? 0);
+      }
+
+      if (sortBy === "recently_worn") {
+        return new Date(rightUsage?.last_worn_date ?? 0).getTime() - new Date(leftUsage?.last_worn_date ?? 0).getTime();
+      }
+
+      return new Date(right.confirmed_at).getTime() - new Date(left.confirmed_at).getTime();
+    });
+  }, [closet.items, sortBy, usageIndex.snapshot.byItemId]);
+
+  const needsReviewCount =
+    reviewQueue.sections.find((section) => section.key === "needs_review")?.items.length ?? 0;
+  const firstReviewableId = reviewQueue.items.find(isReviewableDraft)?.id ?? null;
+  const processingSections = reviewQueue.sections.filter((section) => section.key !== "needs_review");
+  const processingCount = processingSections.reduce((total, section) => total + section.items.length, 0);
+  const hasActiveFilters =
+    appliedColor !== "All" || appliedMaterial !== "All" || sortBy !== "newest";
+  const colorOptions = getColorOptions(metadata.data?.colors ?? []);
+  const materialOptions = getMaterialOptions(metadata.data?.materials ?? []);
+
+  useEffect(() => {
+    closetRefreshRef.current = closet.refresh;
+  }, [closet.refresh]);
+
+  useEffect(() => {
+    reviewRefreshRef.current = reviewQueue.refresh;
+  }, [reviewQueue.refresh]);
+
+  usePolling(
+    () => reviewRefreshRef.current(),
+    activeTab === "processing" || processingCount > 0,
+    3000
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      void reviewRefreshRef.current();
+      void closetRefreshRef.current();
+    }, [])
+  );
+
+  useEffect(() => {
+    if (activeTab !== "processing") {
+      return;
     }
 
-    if (sort === "category") {
-      const leftKey = `${left.category ?? ""}-${left.subcategory ?? ""}-${left.title ?? ""}`;
-      const rightKey = `${right.category ?? ""}-${right.subcategory ?? ""}-${right.title ?? ""}`;
-      return leftKey.localeCompare(rightKey);
+    void reviewRefreshRef.current();
+  }, [activeTab]);
+
+  useEffect(() => {
+    setActiveTab(requestedTab === "processing" ? "processing" : "closet");
+  }, [requestedTab]);
+
+  useEffect(() => {
+    if (
+      requestedTab ||
+      closet.isLoading ||
+      reviewQueue.isLoading ||
+      activeTab !== "closet"
+    ) {
+      return;
     }
 
-    return new Date(right.confirmed_at).getTime() - new Date(left.confirmed_at).getTime();
-  });
+    if (sortedItems.length === 0 && processingSections.length > 0 && needsReviewCount === 0) {
+      setActiveTab("processing");
+    }
+  }, [
+    activeTab,
+    closet.isLoading,
+    needsReviewCount,
+    processingSections.length,
+    requestedTab,
+    reviewQueue.isLoading,
+    sortedItems.length
+  ]);
 
   return (
-    <Screen>
-      <View style={styles.topRow}>
-        <BrandMark variant="wordmark" subtle />
-        <Pressable onPress={() => setIsFilterOpen(true)} style={styles.filterButton}>
-          <AppText variant="captionStrong">Filter</AppText>
-        </Pressable>
-      </View>
-
-      <Card tone="soft">
-        <AppText color={colors.textSubtle} variant="eyebrow">
-          Closet
-        </AppText>
-        <AppText variant="display">Confirmed wardrobe, uncluttered by draft noise.</AppText>
-        <AppText color={colors.textMuted}>
-          Processed imagery leads, search stays calm, and only canonical data belongs in this
-          browsing surface.
-        </AppText>
-        <TextInput
-          placeholder="Search your closet"
-          placeholderTextColor={colors.textSubtle}
-          style={styles.searchInput}
-          value={query}
-          onChangeText={setQuery}
-        />
-      </Card>
-
-      <View style={styles.controlsRow}>
-        {(["newest", "alphabetical", "category"] as SortOption[]).map((option) => {
-          const active = sort === option;
-
-          return (
-            <Pressable
-              key={option}
-              onPress={() => setSort(option)}
-              style={[styles.controlPill, active ? styles.controlPillActive : null]}
-            >
-              <AppText color={active ? colors.text : colors.textSubtle} variant="captionStrong">
-                {option === "newest"
-                  ? "Newest"
-                  : option === "alphabetical"
-                    ? "A-Z"
-                    : "Category"}
+    <>
+      <Screen
+        backgroundColor={palette.cream}
+        contentContainerStyle={styles.screenContent}
+        padded={false}
+      >
+        <View style={styles.page}>
+          <View style={styles.header}>
+            <View>
+              <AppText color={palette.darkText} style={styles.headerTitle}>
+                Closet
               </AppText>
-            </Pressable>
-          );
-        })}
-      </View>
+              <AppText color={palette.warmGray} style={styles.headerSubtitle}>
+                Your confirmed wardrobe
+              </AppText>
+            </View>
 
-      {filterSummary ? (
-        <View style={styles.activeFilterRow}>
-          <Chip label={filterSummary} tone="organize" />
-          <Pressable
-            onPress={() => {
-              setFilters(emptyFilters);
-              setDraftFilters(emptyFilters);
-            }}
-          >
-            <AppText color={colors.text} variant="captionStrong">
-              Clear filters
-            </AppText>
-          </Pressable>
-        </View>
-      ) : null}
+            {activeTab === "closet" ? (
+              <Pressable
+                onPress={() => setShowFilter(true)}
+                style={({ pressed }) => [
+                  styles.iconButton,
+                  pressed ? styles.pressed : null
+                ]}
+              >
+                <Feather color={palette.darkText} name="sliders" size={20} />
+                {hasActiveFilters ? <View style={styles.filterDot} /> : null}
+              </Pressable>
+            ) : (
+              <View style={styles.iconGhost} />
+            )}
+          </View>
 
-      {closet.isLoading ? (
-        <View style={styles.grid}>
-          {[0, 1, 2, 3].map((index) => (
-            <SkeletonBlock key={index} height={250} style={styles.gridTile} />
-          ))}
-        </View>
-      ) : sortedItems.length === 0 ? (
-        <Card tone="soft">
-          <EmptyState
-            eyebrow="Closet"
-            title="Nothing matches this view."
-            copy="Try another search, clear the filters, or confirm more items from the review inbox."
-          />
-        </Card>
-      ) : (
-        <View style={styles.grid}>
-          {sortedItems.map((item) => (
-            <Pressable
-              key={item.item_id}
-              onPress={() => router.push(`/closet/${item.item_id}` as Href)}
-              style={styles.gridTile}
-            >
-              <Card padded={false} shadow={false} style={styles.gridCard} tone="soft">
-                {item.display_image?.url ?? item.thumbnail_image?.url ? (
-                  <Image
-                    source={{ uri: item.display_image?.url ?? item.thumbnail_image?.url ?? undefined }}
-                    style={styles.gridImage}
-                    contentFit="cover"
-                  />
-                ) : (
-                  <View style={[styles.gridImage, styles.imageFallback]} />
-                )}
-                <View style={styles.gridBody}>
-                  <AppText numberOfLines={2} variant="cardTitle">
-                    {item.title ?? "Confirmed item"}
+          <View style={styles.tabToggleShell}>
+            <View style={styles.tabToggle}>
+              <Pressable
+                onPress={() => setActiveTab("closet")}
+                style={({ pressed }) => [
+                  styles.tabButton,
+                  activeTab === "closet" ? styles.tabButtonActive : null,
+                  pressed ? styles.pressed : null
+                ]}
+              >
+                <AppText
+                  color={activeTab === "closet" ? colors.white : palette.warmGray}
+                  style={activeTab === "closet" ? styles.tabButtonLabelActive : styles.tabButtonLabel}
+                >
+                  My Closet
+                </AppText>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  setShowFilter(false);
+                  setActiveTab("processing");
+                }}
+                style={({ pressed }) => [
+                  styles.tabButton,
+                  activeTab === "processing" ? styles.tabButtonActive : null,
+                  pressed ? styles.pressed : null
+                ]}
+              >
+                <View style={styles.processingTabButton}>
+                  <AppText
+                    color={activeTab === "processing" ? colors.white : palette.warmGray}
+                    style={activeTab === "processing" ? styles.tabButtonLabelActive : styles.tabButtonLabel}
+                  >
+                    Processing
                   </AppText>
-                  <AppText color={colors.textMuted} numberOfLines={3} variant="caption">
-                    {buildBrowseMeta(item) ?? "Confirmed metadata"}
-                  </AppText>
+                  {processingCount > 0 ? (
+                    <View
+                      style={[
+                        styles.processingBadge,
+                        activeTab === "processing" ? styles.processingBadgeActive : styles.processingBadgeIdle
+                      ]}
+                    >
+                      <AppText
+                        color={palette.darkText}
+                        style={styles.processingBadgeLabel}
+                      >
+                        {processingCount}
+                      </AppText>
+                    </View>
+                  ) : null}
                 </View>
-              </Card>
-            </Pressable>
-          ))}
-        </View>
-      )}
+              </Pressable>
+            </View>
+          </View>
 
-      {closet.nextCursor ? (
-        <Button
-          label="Load More"
-          loading={closet.isLoadingMore}
-          onPress={() => void closet.loadMore()}
-          variant="secondary"
-        />
-      ) : null}
+          {activeTab === "processing" ? (
+            <ProcessingTab
+              onOpenItem={(reviewItemId) => router.push(`/review/${reviewItemId}` as Href)}
+              onRefresh={() => reviewQueue.refresh()}
+              readyCount={needsReviewCount}
+              sections={processingSections}
+            />
+          ) : (
+            <>
+              <View style={styles.searchShell}>
+                <Feather color={palette.warmGray} name="search" size={20} />
+                <TextInput
+                  onChangeText={setQuery}
+                  placeholder="Search your closet"
+                  placeholderTextColor={palette.warmGray}
+                  style={styles.searchInput}
+                  value={query}
+                />
+              </View>
+
+              <ScrollView
+                contentContainerStyle={styles.summaryRow}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+              >
+                <SummaryPill label={`${sortedItems.length} items`} />
+                <SummaryPill label="Confirmed only" />
+                <SummaryPill label={sortLabels[sortBy]} />
+              </ScrollView>
+
+              <ScrollView
+                contentContainerStyle={styles.categoriesRow}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+              >
+                {categories.map((category) => {
+                  const active = selectedCategory === category.id;
+
+                  return (
+                    <Pressable
+                      key={category.id}
+                      onPress={() => setSelectedCategory(category.id)}
+                      style={({ pressed }) => [
+                        styles.categoryChip,
+                        active ? styles.categoryChipActive : null,
+                        pressed ? styles.pressed : null
+                      ]}
+                    >
+                      <AppText
+                        color={palette.darkText}
+                        style={active ? styles.categoryLabelActive : styles.categoryLabel}
+                      >
+                        {category.label}
+                      </AppText>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              {needsReviewCount > 0 ? (
+                <Pressable
+                  onPress={() => {
+                    if (session?.access_token && firstReviewableId) {
+                      void prefetchClosetReviewItem(session.access_token, firstReviewableId);
+                      router.push(`/review/${firstReviewableId}` as Href);
+                      return;
+                    }
+
+                    router.push("/review" as Href);
+                  }}
+                  style={({ pressed }) => [
+                    styles.pendingBanner,
+                    pressed ? styles.pressed : null
+                  ]}
+                >
+                  <View style={styles.pendingCopy}>
+                    <View style={styles.pendingIcon}>
+                      <Feather color={palette.darkText} name="alert-circle" size={18} />
+                    </View>
+                    <View style={styles.pendingTextStack}>
+                      <AppText color={palette.darkText} style={styles.pendingTitle}>
+                        {needsReviewCount} items need confirmation
+                      </AppText>
+                      <AppText color={palette.warmGray} style={styles.pendingBody}>
+                        Review before adding to closet
+                      </AppText>
+                    </View>
+                  </View>
+                  <Feather color={palette.darkText} name="chevron-right" size={22} />
+                </Pressable>
+              ) : null}
+
+              {closet.isLoading ? (
+                <View style={styles.grid}>
+                  {[0, 1, 2, 3].map((index) => (
+                    <SkeletonBlock key={index} height={250} style={styles.gridTile} />
+                  ))}
+                </View>
+              ) : sortedItems.length === 0 ? (
+                <View style={styles.emptyStateShell}>
+                  <EmptyState
+                    copy="Try another search or clear the active filters."
+                    eyebrow="Closet"
+                    title="Nothing matches this view."
+                  />
+                </View>
+              ) : (
+                <View style={styles.grid}>
+                  {sortedItems.map((item) => {
+                    const usage = usageIndex.snapshot.byItemId[item.item_id];
+                    const tag = buildItemTag(
+                      item.item_id,
+                      item.confirmed_at,
+                      usage?.wear_count ?? 0,
+                      usageIndex.snapshot.mostWornItemId,
+                      usage?.last_worn_date
+                    );
+
+                    return (
+                      <Pressable
+                        key={item.item_id}
+                        onPress={() => router.push(`/closet/${item.item_id}` as Href)}
+                        style={({ pressed }) => [
+                          styles.gridTile,
+                          pressed ? styles.gridTilePressed : null
+                        ]}
+                      >
+                        <View style={styles.gridCard}>
+                          {item.display_image?.url ?? item.thumbnail_image?.url ? (
+                            <Image
+                              contentFit="cover"
+                              source={{ uri: item.display_image?.url ?? item.thumbnail_image?.url ?? undefined }}
+                              style={styles.gridImage}
+                            />
+                          ) : (
+                            <View style={[styles.gridImage, styles.imageFallback]} />
+                          )}
+
+                          <View style={styles.gridBody}>
+                            <AppText color={palette.darkText} numberOfLines={2} style={styles.gridTitle}>
+                              {item.title ?? "Confirmed item"}
+                            </AppText>
+                            <View style={styles.gridMetaRow}>
+                              <AppText color={palette.warmGray} numberOfLines={1} style={styles.gridMeta}>
+                                {humanizeEnum(item.category ?? "closet_item")}
+                              </AppText>
+                              {tag ? (
+                                <>
+                                  <View style={styles.gridMetaDot} />
+                                  <View style={styles.tagPill}>
+                                    <AppText color={palette.darkText} numberOfLines={1} style={styles.tagLabel}>
+                                      {tag}
+                                    </AppText>
+                                  </View>
+                                </>
+                              ) : null}
+                            </View>
+                          </View>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+            </>
+          )}
+        </View>
+      </Screen>
 
       <ModalSheet
-        visible={isFilterOpen}
-        onClose={() => setIsFilterOpen(false)}
         footer={
           <View style={styles.sheetFooter}>
-            <Button
-              label="Apply Filters"
+            <Pressable
               onPress={() => {
-                setFilters(draftFilters);
-                setIsFilterOpen(false);
+                setDraftSortBy("newest");
+                setDraftColor("All");
+                setDraftMaterial("All");
+                setSortBy("newest");
+                setAppliedColor("All");
+                setAppliedMaterial("All");
               }}
-              tone="organize"
-            />
-            <Button
-              label="Reset"
+              style={({ pressed }) => [
+                styles.resetButton,
+                pressed ? styles.pressed : null
+              ]}
+            >
+              <AppText color={palette.darkText} style={styles.resetButtonLabel}>
+                Reset
+              </AppText>
+            </Pressable>
+
+            <Pressable
               onPress={() => {
-                setDraftFilters(emptyFilters);
-                setFilters(emptyFilters);
+                setSortBy(draftSortBy);
+                setAppliedColor(draftColor);
+                setAppliedMaterial(draftMaterial);
+                setShowFilter(false);
               }}
-              variant="secondary"
-            />
+              style={({ pressed }) => [
+                styles.applyButton,
+                pressed ? styles.pressed : null
+              ]}
+            >
+              <Feather color={colors.white} name="check" size={16} />
+              <AppText color={colors.white} style={styles.applyButtonLabel}>
+                Apply
+              </AppText>
+            </Pressable>
           </View>
         }
+        onClose={() => {
+          setDraftSortBy(sortBy);
+          setDraftColor(appliedColor);
+          setDraftMaterial(appliedMaterial);
+          setShowFilter(false);
+        }}
+        visible={showFilter}
       >
-        <AppText variant="title">Closet filters</AppText>
+        <View style={styles.sheetHeader}>
+          <AppText color={palette.darkText} style={styles.sheetTitle}>
+            Filter & Sort
+          </AppText>
+          <Pressable
+            onPress={() => {
+              setDraftSortBy(sortBy);
+              setDraftColor(appliedColor);
+              setDraftMaterial(appliedMaterial);
+              setShowFilter(false);
+            }}
+            style={({ pressed }) => [
+              styles.sheetClose,
+              pressed ? styles.pressed : null
+            ]}
+          >
+            <Feather color={palette.warmGray} name="x" size={16} />
+          </Pressable>
+        </View>
+
         <FilterGroup
-          title="Category"
-          options={categoryOptions.map((option) => option.name)}
-          selected={draftFilters.category}
-          onSelect={(value) =>
-            setDraftFilters((current) => ({
-              ...current,
-              category: value === current.category ? "" : value,
-              subcategory: ""
-            }))
-          }
+          options={Object.entries(sortLabels).map(([value, label]) => ({ label, value }))}
+          selectedValue={draftSortBy}
+          title="Sort by"
+          onSelect={(value) => setDraftSortBy(value as SortOption)}
         />
+
         <FilterGroup
-          title="Subcategory"
-          options={subcategoryOptions}
-          selected={draftFilters.subcategory}
-          onSelect={(value) =>
-            setDraftFilters((current) => ({
-              ...current,
-              subcategory: value === current.subcategory ? "" : value
-            }))
-          }
-        />
-        <FilterGroup
+          options={colorOptions.map((option) => ({ label: humanizeEnum(option), value: option }))}
+          selectedValue={draftColor}
           title="Color"
-          options={metadata.data?.colors ?? []}
-          selected={draftFilters.color}
-          onSelect={(value) =>
-            setDraftFilters((current) => ({
-              ...current,
-              color: value === current.color ? "" : value
-            }))
-          }
+          onSelect={setDraftColor}
         />
+
         <FilterGroup
+          options={materialOptions.map((option) => ({ label: humanizeEnum(option), value: option }))}
+          selectedValue={draftMaterial}
           title="Material"
-          options={metadata.data?.materials ?? []}
-          selected={draftFilters.material}
-          onSelect={(value) =>
-            setDraftFilters((current) => ({
-              ...current,
-              material: value === current.material ? "" : value
-            }))
-          }
-        />
-        <FilterGroup
-          title="Pattern"
-          options={metadata.data?.patterns ?? []}
-          selected={draftFilters.pattern}
-          onSelect={(value) =>
-            setDraftFilters((current) => ({
-              ...current,
-              pattern: value === current.pattern ? "" : value
-            }))
-          }
+          onSelect={setDraftMaterial}
         />
       </ModalSheet>
-    </Screen>
+    </>
+  );
+}
+
+function SummaryPill({ label }: { label: string }) {
+  return (
+    <View style={styles.summaryPill}>
+      <AppText color={palette.warmGray} style={styles.summaryLabel}>
+        {label}
+      </AppText>
+    </View>
   );
 }
 
 function FilterGroup({
-  title,
   options,
-  selected,
-  onSelect
+  onSelect,
+  selectedValue,
+  title
 }: {
-  title: string;
-  options: string[];
-  selected: string;
+  options: Array<{ label: string; value: string }>;
   onSelect: (value: string) => void;
+  selectedValue: string;
+  title: string;
 }) {
-  if (!options.length) {
-    return null;
-  }
-
   return (
     <View style={styles.filterGroup}>
-      <AppText variant="bodyStrong">{title}</AppText>
-      <View style={styles.filterOptions}>
+      <AppText color={palette.muted} style={styles.filterTitle}>
+        {title}
+      </AppText>
+      <View style={styles.filterChipRow}>
         {options.map((option) => {
-          const active = option === selected;
+          const active = option.value === selectedValue;
 
           return (
             <Pressable
-              key={option}
-              onPress={() => onSelect(option)}
-              style={[styles.optionChip, active ? styles.optionChipActive : null]}
+              key={option.value}
+              onPress={() => onSelect(option.value)}
+              style={({ pressed }) => [
+                styles.filterChip,
+                active ? styles.filterChipActive : null,
+                pressed ? styles.pressed : null
+              ]}
             >
-              <AppText color={active ? colors.text : colors.textSubtle} variant="captionStrong">
-                {option}
+              <AppText
+                color={active ? colors.white : palette.darkText}
+                style={styles.filterChipLabel}
+              >
+                {option.label}
               </AppText>
             </Pressable>
           );
@@ -310,103 +646,380 @@ function FilterGroup({
 }
 
 const styles = StyleSheet.create({
-  topRow: {
+  screenContent: {
+    flexGrow: 1,
+    paddingBottom: 132
+  },
+  page: {
+    paddingHorizontal: 24,
+    paddingTop: 18,
+    gap: 20
+  },
+  header: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between"
   },
-  filterButton: {
-    minHeight: 42,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.pill,
+  headerTitle: {
+    fontFamily: fontFamilies.serifSemiBold,
+    fontSize: 40,
+    lineHeight: 42,
+    letterSpacing: -1.2
+  },
+  headerSubtitle: {
+    marginTop: 4,
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 15,
+    lineHeight: 20
+  },
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: palette.warmWhite,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.surfaceStrong,
-    borderWidth: 1,
-    borderColor: colors.border
+    shadowColor: palette.cardShadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 12,
+    elevation: 4
+  },
+  iconGhost: {
+    width: 44,
+    height: 44
+  },
+  filterDot: {
+    position: "absolute",
+    top: -1,
+    right: -1,
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: palette.coral
+  },
+  tabToggleShell: {
+    marginTop: -2
+  },
+  tabToggle: {
+    borderRadius: 20,
+    backgroundColor: palette.warmWhite,
+    padding: 4,
+    flexDirection: "row",
+    shadowColor: palette.cardShadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 12,
+    elevation: 3
+  },
+  tabButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12
+  },
+  tabButtonActive: {
+    backgroundColor: "#1F2937",
+    shadowColor: "rgba(15, 23, 42, 0.15)",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 3
+  },
+  tabButtonLabel: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 13,
+    lineHeight: 16
+  },
+  tabButtonLabelActive: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 13,
+    lineHeight: 16
+  },
+  processingTabButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6
+  },
+  processingBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  processingBadgeActive: {
+    backgroundColor: palette.butter
+  },
+  processingBadgeIdle: {
+    backgroundColor: palette.coral
+  },
+  processingBadgeLabel: {
+    fontFamily: fontFamilies.sansBold,
+    fontSize: 10,
+    lineHeight: 12
+  },
+  searchShell: {
+    minHeight: 56,
+    borderRadius: 28,
+    backgroundColor: palette.warmWhite,
+    paddingHorizontal: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    shadowColor: palette.cardShadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 12,
+    elevation: 3
   },
   searchInput: {
-    minHeight: 58,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-    paddingHorizontal: spacing.md,
-    color: colors.text,
-    fontFamily: "Manrope_500Medium",
-    fontSize: 16
+    flex: 1,
+    color: palette.darkText,
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 15,
+    lineHeight: 20,
+    paddingVertical: 0
   },
-  controlsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
+  summaryRow: {
+    gap: 8,
+    paddingRight: 20
   },
-  controlPill: {
-    paddingHorizontal: spacing.md,
+  summaryPill: {
+    borderRadius: 20,
+    backgroundColor: palette.warmWhite,
+    paddingHorizontal: 14,
+    paddingVertical: 8
+  },
+  summaryLabel: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 12,
+    lineHeight: 16
+  },
+  categoriesRow: {
+    gap: 10,
+    paddingRight: 20
+  },
+  categoryChip: {
+    borderRadius: 999,
+    backgroundColor: palette.warmWhite,
+    paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceStrong,
-    borderWidth: 1,
-    borderColor: colors.border
+    shadowColor: "rgba(15, 23, 42, 0.05)",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 10,
+    elevation: 2
   },
-  controlPillActive: {
-    backgroundColor: colors.cornflowerSurface,
-    borderColor: "rgba(174, 197, 241, 0.62)"
+  categoryChipActive: {
+    backgroundColor: palette.butter
   },
-  activeFilterRow: {
+  categoryLabel: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 14,
+    lineHeight: 18
+  },
+  categoryLabelActive: {
+    fontFamily: fontFamilies.sansBold,
+    fontSize: 14,
+    lineHeight: 18
+  },
+  pendingBanner: {
+    borderRadius: 28,
+    backgroundColor: "#FFD2C2",
+    paddingHorizontal: 24,
+    paddingVertical: 18,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: spacing.md
+    shadowColor: "rgba(255, 107, 107, 0.22)",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 1,
+    shadowRadius: 16,
+    elevation: 4
+  },
+  pendingCopy: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1
+  },
+  pendingIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    backgroundColor: palette.warmWhite,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  pendingTextStack: {
+    flex: 1,
+    gap: 2
+  },
+  pendingTitle: {
+    fontFamily: fontFamilies.sansBold,
+    fontSize: 16,
+    lineHeight: 20
+  },
+  pendingBody: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 13,
+    lineHeight: 17
   },
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: spacing.sm
+    gap: 16
   },
   gridTile: {
-    width: "47%"
+    width: "47.5%"
+  },
+  gridTilePressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.985 }]
   },
   gridCard: {
-    gap: spacing.sm
+    borderRadius: 28,
+    backgroundColor: palette.warmWhite,
+    padding: 12,
+    shadowColor: "rgba(15, 23, 42, 0.07)",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 1,
+    shadowRadius: 20,
+    elevation: 5
   },
   gridImage: {
     width: "100%",
-    height: 184,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
-    backgroundColor: colors.backgroundMuted
+    aspectRatio: 3 / 4,
+    borderRadius: 20,
+    backgroundColor: palette.cream
   },
   imageFallback: {
     borderWidth: 1,
-    borderColor: colors.border
+    borderColor: palette.border
   },
   gridBody: {
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.md,
-    gap: spacing.xs
+    marginTop: 12,
+    gap: 6
   },
-  sheetFooter: {
-    gap: spacing.sm
+  gridTitle: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 14,
+    lineHeight: 18
+  },
+  gridMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6
+  },
+  gridMeta: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 11,
+    lineHeight: 15
+  },
+  gridMetaDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 999,
+    backgroundColor: palette.warmGray
+  },
+  tagPill: {
+    borderRadius: 12,
+    backgroundColor: palette.lavender,
+    paddingHorizontal: 8,
+    paddingVertical: 2
+  },
+  tagLabel: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 9,
+    lineHeight: 12
+  },
+  emptyStateShell: {
+    borderRadius: 28,
+    backgroundColor: palette.warmWhite,
+    paddingHorizontal: 20,
+    paddingVertical: 28
+  },
+  sheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  sheetTitle: {
+    fontFamily: fontFamilies.serifSemiBold,
+    fontSize: 20,
+    lineHeight: 24
+  },
+  sheetClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#F1F0EE",
+    alignItems: "center",
+    justifyContent: "center"
   },
   filterGroup: {
-    gap: spacing.sm
+    gap: 12
   },
-  filterOptions: {
+  filterTitle: {
+    fontFamily: fontFamilies.sansBold,
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 1.1,
+    textTransform: "uppercase"
+  },
+  filterChipRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: spacing.sm
+    gap: 8
   },
-  optionChip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceStrong,
-    borderWidth: 1,
-    borderColor: colors.border
+  filterChip: {
+    borderRadius: 999,
+    backgroundColor: palette.cream,
+    paddingHorizontal: 14,
+    paddingVertical: 10
   },
-  optionChipActive: {
-    backgroundColor: colors.cornflowerSurface,
-    borderColor: "rgba(174, 197, 241, 0.62)"
+  filterChipActive: {
+    backgroundColor: palette.darkText
+  },
+  filterChipLabel: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 13,
+    lineHeight: 17
+  },
+  sheetFooter: {
+    gap: 12
+  },
+  applyButton: {
+    minHeight: 48,
+    borderRadius: 18,
+    backgroundColor: palette.darkText,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8
+  },
+  applyButtonLabel: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 14,
+    lineHeight: 18
+  },
+  resetButton: {
+    minHeight: 48,
+    borderRadius: 18,
+    backgroundColor: palette.cream,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  resetButtonLabel: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 14,
+    lineHeight: 18
+  },
+  pressed: {
+    opacity: 0.78
   }
 });
