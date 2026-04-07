@@ -1,17 +1,31 @@
-import { Link, router } from "expo-router";
+import { Feather } from "@expo/vector-icons";
+import { router, type Href } from "expo-router";
 import { useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Animated, Pressable, StyleSheet, View } from "react-native";
 
 import { useAuth } from "../../src/auth/provider";
-import { colors, spacing } from "../../src/theme";
-import { AppText, BrandMark, Button, Card, Screen, TextField } from "../../src/ui";
+import {
+  AuthFooterLink,
+  EditorialBackButton,
+  EditorialPrimaryButton,
+  EditorialScreen,
+  EditorialTextField,
+  buildFadeUpStyle,
+  editorialPalette,
+  useEditorialIntro
+} from "../../src/auth/editorial";
+import { colors, fontFamilies } from "../../src/theme";
+import { AppText } from "../../src/ui";
 
 export default function LoginScreen() {
   const { loginWithPassword } = useAuth();
+  const intro = useEditorialIntro(6);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isValid = email.trim().length > 0 && password.length > 0;
 
   async function handleSubmit() {
     setIsSubmitting(true);
@@ -29,75 +43,137 @@ export default function LoginScreen() {
   }
 
   return (
-    <Screen scrollable={false}>
-      <View style={styles.authShell}>
-        <BrandMark />
-        <Card tone="soft" style={styles.heroCard}>
-          <AppText color={colors.textSubtle} variant="eyebrow">
-            Light-mode hero
-          </AppText>
-          <AppText variant="display">Your wardrobe becomes useful when review stays intentional.</AppText>
-          <AppText color={colors.textMuted}>
-            Sign in to move from upload to review to confirmed closet data without ever letting AI
-            suggestions quietly become truth.
-          </AppText>
-        </Card>
+    <EditorialScreen scrollable={false}>
+      <View style={styles.page}>
+        <Animated.View style={buildFadeUpStyle(intro[0], -8)}>
+          <EditorialBackButton onPress={() => router.replace("/welcome" as Href)} />
+        </Animated.View>
 
-        <Card tone="soft" style={styles.formCard}>
-          <TextField
-            autoCapitalize="none"
-            autoComplete="email"
-            keyboardType="email-address"
-            label="Email"
-            placeholder="you@example.com"
-            value={email}
-            onChangeText={setEmail}
-          />
-          <TextField
-            autoCapitalize="none"
-            autoComplete="password"
-            label="Password"
-            placeholder="Password"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
+        <Animated.View style={[styles.titleBlock, buildFadeUpStyle(intro[1])]}>
+          <AppText style={styles.title}>Welcome back</AppText>
+          <AppText color={editorialPalette.muted} style={styles.subtitle}>
+            Pick up where you left off.
+          </AppText>
+        </Animated.View>
 
+        <View style={styles.formBlock}>
+          <Animated.View style={buildFadeUpStyle(intro[2])}>
+            <EditorialTextField
+              autoCapitalize="none"
+              autoComplete="email"
+              keyboardType="email-address"
+              label="Email"
+              placeholder="you@example.com"
+              value={email}
+              onChangeText={setEmail}
+            />
+          </Animated.View>
+
+          <Animated.View style={buildFadeUpStyle(intro[3])}>
+            <EditorialTextField
+              autoCapitalize="none"
+              autoComplete="password"
+              label="Password"
+              placeholder="••••••••"
+              rightAccessory={
+                <Pressable
+                  onPress={() => setShowPassword((current) => !current)}
+                  style={({ pressed }) => [pressed ? styles.pressedIcon : null]}
+                >
+                  <Feather
+                    color={editorialPalette.subtle}
+                    name={showPassword ? "eye-off" : "eye"}
+                    size={18}
+                  />
+                </Pressable>
+              }
+              secureTextEntry={!showPassword}
+              value={password}
+              onChangeText={setPassword}
+            />
+          </Animated.View>
+        </View>
+
+        <Animated.View style={[styles.forgotRow, buildFadeUpStyle(intro[4], 10)]}>
+          <Pressable
+            onPress={() => router.push("/forgot-password" as Href)}
+            style={styles.forgotLinkPressable}
+          >
+            <AppText color={editorialPalette.subtle} style={styles.forgotLink}>
+              Forgot password?
+            </AppText>
+          </Pressable>
+        </Animated.View>
+
+        <Animated.View style={[styles.ctaBlock, buildFadeUpStyle(intro[5], 20)]}>
           {error ? (
-            <AppText color={colors.danger} variant="caption">
+            <AppText color={colors.danger} style={styles.feedbackText}>
               {error}
             </AppText>
           ) : null}
-
-          <Button label="Sign In" loading={isSubmitting} onPress={() => void handleSubmit()} />
-
-          <AppText color={colors.textMuted} variant="caption">
-            New here?{" "}
-            <Link href="/register" style={styles.link}>
-              Create an account
-            </Link>
-          </AppText>
-        </Card>
+          <EditorialPrimaryButton
+            disabled={!isValid}
+            label="Sign In"
+            loading={isSubmitting}
+            onPress={() => void handleSubmit()}
+          />
+          <AuthFooterLink
+            label="Create an account"
+            onPress={() => router.push("/register")}
+            prefix="New here?"
+          />
+        </Animated.View>
       </View>
-    </Screen>
+    </EditorialScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  authShell: {
-    flex: 1,
-    justifyContent: "space-between",
-    paddingBottom: spacing.xl
+  page: {
+    flex: 1
   },
-  heroCard: {
-    marginTop: spacing.xl,
-    gap: spacing.md
+  titleBlock: {
+    marginTop: 28,
+    gap: 8
   },
-  formCard: {
-    gap: spacing.md
+  title: {
+    fontFamily: fontFamilies.serifMedium,
+    fontSize: 32,
+    lineHeight: 38,
+    letterSpacing: -0.64
   },
-  link: {
-    color: colors.text,
-    fontFamily: "Manrope_700Bold"
+  subtitle: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 15,
+    lineHeight: 22
+  },
+  formBlock: {
+    marginTop: 40,
+    gap: 20
+  },
+  forgotRow: {
+    marginTop: 16
+  },
+  forgotLinkPressable: {
+    alignSelf: "flex-start"
+  },
+  forgotLink: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 13,
+    lineHeight: 18
+  },
+  feedbackText: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 13,
+    lineHeight: 18
+  },
+  ctaBlock: {
+    marginTop: "auto",
+    paddingBottom: 40,
+    gap: 14
+  },
+  pressedIcon: {
+    opacity: 0.72,
+    transform: [{ scale: 0.96 }]
   }
 });

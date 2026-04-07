@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack, useRouter, useSegments, type Href } from "expo-router";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 
 import { AuthProvider, useAuth } from "../src/auth/provider";
@@ -21,7 +21,7 @@ function RootNavigator() {
     const isAuthRoute = firstSegment === "(auth)";
 
     if (status === "anonymous" && !isAuthRoute) {
-      router.replace("/login");
+      router.replace("/splash" as Href);
     }
 
     if (status === "authenticated" && isAuthRoute) {
