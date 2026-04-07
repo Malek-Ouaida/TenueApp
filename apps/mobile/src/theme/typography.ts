@@ -2,8 +2,12 @@ export const fontFamilies = {
   sansRegular: "Manrope_500Medium",
   sansSemiBold: "Manrope_600SemiBold",
   sansBold: "Manrope_700Bold",
+  serifRegular: "Newsreader_400Regular",
+  serifRegularItalic: "Newsreader_400Regular_Italic",
   serifMedium: "Newsreader_500Medium",
+  serifMediumItalic: "Newsreader_500Medium_Italic",
   serifSemiBold: "Newsreader_600SemiBold",
+  serifSemiBoldItalic: "Newsreader_600SemiBold_Italic",
   serifBold: "Newsreader_700Bold"
 } as const;
 
