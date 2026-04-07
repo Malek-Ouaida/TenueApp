@@ -11,6 +11,7 @@
     "format": "node -e \"console.log('apps/mobile: no formatter changes in Phase 03 auth foundation')\""
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.3",
     "@expo-google-fonts/manrope": "0.4.2",
     "@expo-google-fonts/newsreader": "0.4.1",
     "@expo/metro-runtime": "~6.1.2",
