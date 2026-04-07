@@ -5,6 +5,7 @@ import type {
   ClosetConfirmRequest,
   ClosetDraftSnapshot,
   ClosetExtractionSnapshot,
+  ClosetHistoryResponse,
   ClosetItemDetailSnapshot,
   ClosetItemReviewSnapshot,
   ClosetMetadataOptionsResponse,
@@ -197,6 +198,19 @@ export function getConfirmedClosetItemDetail(accessToken: string, itemId: string
   return apiRequest<ClosetItemDetailSnapshot>(`/closet/items/${itemId}`, {
     headers: buildAuthHeaders(accessToken)
   });
+}
+
+export function getClosetItemHistory(
+  accessToken: string,
+  itemId: string,
+  params: { cursor?: string | null; limit?: number } = {}
+) {
+  return apiRequest<ClosetHistoryResponse>(
+    `/closet/items/${itemId}/history${buildQueryString(params)}`,
+    {
+      headers: buildAuthHeaders(accessToken)
+    }
+  );
 }
 
 export function archiveClosetItem(accessToken: string, itemId: string) {

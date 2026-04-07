@@ -104,6 +104,10 @@ export function buildQueueSections(items: ClosetDraftSnapshot[]): ClosetQueueSec
   return sections.filter((section) => section.items.length > 0);
 }
 
+export function isReviewableDraft(item: ClosetDraftSnapshot) {
+  return item.lifecycle_status !== "archived" && getQueueSectionKey(item) === "needs_review";
+}
+
 export function getStatusChipTone(status: string) {
   if (status === "confirmed" || status === "ready_to_confirm" || status === "completed") {
     return "success" as const;

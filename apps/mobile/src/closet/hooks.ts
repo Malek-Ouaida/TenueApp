@@ -9,6 +9,7 @@ import {
   dismissSimilarityEdge,
   getClosetDuplicateItems,
   getClosetExtractionSnapshot,
+  getClosetItemHistory,
   getClosetMetadataOptions,
   getClosetProcessingSnapshot,
   getClosetReviewQueue,
@@ -32,6 +33,7 @@ import type {
   ClosetBrowseListItemSnapshot,
   ClosetDraftSnapshot,
   ClosetExtractionSnapshot,
+  ClosetHistoryEventSnapshot,
   ClosetItemDetailSnapshot,
   ClosetItemReviewSnapshot,
   ClosetMetadataOptionsResponse,
@@ -47,6 +49,151 @@ import { buildQueueSections } from "./status";
 function appendUniqueItems<T extends { item_id?: string; id?: string }>(current: T[], next: T[]) {
   const seen = new Set(current.map((item) => item.item_id ?? item.id));
   return current.concat(next.filter((item) => !seen.has(item.item_id ?? item.id)));
+}
+
+type ClosetReviewItemSnapshots = {
+  cachedAt: number;
+  extraction: ClosetExtractionSnapshot | null;
+  processing: ClosetProcessingSnapshot | null;
+  review: ClosetItemReviewSnapshot | null;
+};
+
+const REVIEW_ITEM_CACHE_TTL_MS = 60_000;
+const REVIEW_QUEUE_CACHE_TTL_MS = 30_000;
+const reviewItemSnapshotCache = new Map<string, ClosetReviewItemSnapshots>();
+const reviewItemSnapshotInflight = new Map<string, Promise<ClosetReviewItemSnapshots>>();
+const reviewQueueCache = new Map<
+  string,
+  {
+    cachedAt: number;
+    items: ClosetDraftSnapshot[];
+    nextCursor: string | null;
+  }
+>();
+
+function buildReviewItemCacheKey(accessToken: string, itemId: string) {
+  return `${accessToken}:${itemId}`;
+}
+
+function buildReviewQueueCacheKey(accessToken: string, limit: number) {
+  return `${accessToken}:queue:${limit}`;
+}
+
+function getCachedReviewItemSnapshots(cacheKey: string) {
+  const cached = reviewItemSnapshotCache.get(cacheKey) ?? null;
+  if (!cached) {
+    return null;
+  }
+
+  if (Date.now() - cached.cachedAt > REVIEW_ITEM_CACHE_TTL_MS) {
+    reviewItemSnapshotCache.delete(cacheKey);
+    return null;
+  }
+
+  return cached;
+}
+
+function storeReviewItemSnapshots(
+  cacheKey: string,
+  snapshots: Omit<ClosetReviewItemSnapshots, "cachedAt">
+) {
+  const nextSnapshots = {
+    ...snapshots,
+    cachedAt: Date.now()
+  } satisfies ClosetReviewItemSnapshots;
+  reviewItemSnapshotCache.set(cacheKey, nextSnapshots);
+  return nextSnapshots;
+}
+
+async function fetchReviewItemSnapshots(accessToken: string, itemId: string) {
+  const cacheKey = buildReviewItemCacheKey(accessToken, itemId);
+  const inFlight = reviewItemSnapshotInflight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request = (async () => {
+    const [processingResult, extractionResult, reviewResult] = await Promise.allSettled([
+      getClosetProcessingSnapshot(accessToken, itemId),
+      getClosetExtractionSnapshot(accessToken, itemId),
+      getClosetReviewSnapshot(accessToken, itemId)
+    ]);
+
+    const processing =
+      processingResult.status === "fulfilled" ? processingResult.value : null;
+    const extraction =
+      extractionResult.status === "fulfilled" ? extractionResult.value : null;
+
+    let review: ClosetItemReviewSnapshot | null = null;
+    if (reviewResult.status === "fulfilled") {
+      review = reviewResult.value;
+    } else if (!(reviewResult.reason instanceof ApiError && reviewResult.reason.code === "review_not_available")) {
+      throw reviewResult.reason;
+    }
+
+    if (!processing && !extraction && !review) {
+      throw (
+        (processingResult.status === "rejected" && processingResult.reason) ||
+        (extractionResult.status === "rejected" && extractionResult.reason) ||
+        new Error("Review snapshots could not be loaded.")
+      );
+    }
+
+    return storeReviewItemSnapshots(cacheKey, {
+      extraction,
+      processing,
+      review
+    });
+  })().finally(() => {
+    reviewItemSnapshotInflight.delete(cacheKey);
+  });
+
+  reviewItemSnapshotInflight.set(cacheKey, request);
+  return request;
+}
+
+export function prefetchClosetReviewItem(accessToken?: string | null, itemId?: string | null) {
+  if (!accessToken || !itemId) {
+    return Promise.resolve();
+  }
+
+  const cacheKey = buildReviewItemCacheKey(accessToken, itemId);
+  if (getCachedReviewItemSnapshots(cacheKey)) {
+    return Promise.resolve();
+  }
+
+  return fetchReviewItemSnapshots(accessToken, itemId)
+    .then(() => undefined)
+    .catch(() => undefined);
+}
+
+function getCachedReviewQueue(cacheKey: string) {
+  const cached = reviewQueueCache.get(cacheKey) ?? null;
+  if (!cached) {
+    return null;
+  }
+
+  if (Date.now() - cached.cachedAt > REVIEW_QUEUE_CACHE_TTL_MS) {
+    reviewQueueCache.delete(cacheKey);
+    return null;
+  }
+
+  return cached;
+}
+
+function storeReviewQueue(
+  cacheKey: string,
+  payload: {
+    items: ClosetDraftSnapshot[];
+    nextCursor: string | null;
+  }
+) {
+  const cached = {
+    ...payload,
+    cachedAt: Date.now()
+  };
+  reviewQueueCache.set(cacheKey, cached);
+  return cached;
 }
 
 export function useClosetMetadataOptions(accessToken?: string | null) {
@@ -96,14 +243,20 @@ export function useClosetMetadataOptions(accessToken?: string | null) {
 }
 
 export function useReviewQueue(accessToken?: string | null, limit = 20) {
-  const [items, setItems] = useState<ClosetDraftSnapshot[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const cacheKey = accessToken ? buildReviewQueueCacheKey(accessToken, limit) : null;
+  const cachedQueue = cacheKey ? getCachedReviewQueue(cacheKey) : null;
+  const [items, setItems] = useState<ClosetDraftSnapshot[]>(cachedQueue?.items ?? []);
+  const [nextCursor, setNextCursor] = useState<string | null>(cachedQueue?.nextCursor ?? null);
+  const [isLoading, setIsLoading] = useState(cachedQueue == null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function load(cursor?: string | null, mode: "replace" | "append" = "replace") {
+  async function load(
+    cursor?: string | null,
+    mode: "replace" | "append" = "replace",
+    options: { silent?: boolean } = {}
+  ) {
     if (!accessToken) {
       setItems([]);
       setNextCursor(null);
@@ -112,8 +265,12 @@ export function useReviewQueue(accessToken?: string | null, limit = 20) {
     }
 
     if (mode === "replace") {
-      setIsLoading(cursor == null);
-      setIsRefreshing(cursor != null);
+      if (options.silent) {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(cursor == null);
+        setIsRefreshing(cursor != null);
+      }
     } else {
       setIsLoadingMore(true);
     }
@@ -126,7 +283,16 @@ export function useReviewQueue(accessToken?: string | null, limit = 20) {
       });
 
       startTransition(() => {
-        setItems((current) => (mode === "append" ? appendUniqueItems(current, response.items) : response.items));
+        setItems((current) => {
+          const nextItems = mode === "append" ? appendUniqueItems(current, response.items) : response.items;
+          if (cacheKey) {
+            storeReviewQueue(cacheKey, {
+              items: nextItems,
+              nextCursor: response.next_cursor
+            });
+          }
+          return nextItems;
+        });
         setNextCursor(response.next_cursor);
       });
     } catch (loadError) {
@@ -139,8 +305,26 @@ export function useReviewQueue(accessToken?: string | null, limit = 20) {
   }
 
   useEffect(() => {
+    if (!accessToken) {
+      setItems([]);
+      setNextCursor(null);
+      setIsLoading(false);
+      return;
+    }
+
+    if (cachedQueue) {
+      setItems(cachedQueue.items);
+      setNextCursor(cachedQueue.nextCursor);
+      setIsLoading(false);
+      void load(undefined, "replace", { silent: true });
+      return;
+    }
+
+    setItems([]);
+    setNextCursor(null);
+    setIsLoading(true);
     void load(undefined, "replace");
-  }, [accessToken, limit]);
+  }, [accessToken, cachedQueue, limit]);
 
   return {
     error,
@@ -294,6 +478,69 @@ export function useClosetItemDetail(accessToken?: string | null, itemId?: string
   };
 }
 
+export function useClosetItemHistory(accessToken?: string | null, itemId?: string | null, limit = 50) {
+  const [items, setItems] = useState<ClosetHistoryEventSnapshot[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load(cursor?: string | null, mode: "replace" | "append" = "replace") {
+    if (!accessToken || !itemId) {
+      setItems([]);
+      setNextCursor(null);
+      setIsLoading(false);
+      return;
+    }
+
+    if (mode === "append") {
+      setIsLoadingMore(true);
+    } else {
+      setIsLoading(true);
+    }
+    setError(null);
+
+    try {
+      const response = await getClosetItemHistory(accessToken, itemId, {
+        cursor,
+        limit
+      });
+
+      startTransition(() => {
+        setItems((current) =>
+          mode === "append" ? appendUniqueItems(current, response.items) : response.items
+        );
+        setNextCursor(response.next_cursor);
+      });
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Closet history could not be loaded.");
+    } finally {
+      setIsLoading(false);
+      setIsLoadingMore(false);
+    }
+  }
+
+  useEffect(() => {
+    void load(undefined, "replace");
+  }, [accessToken, itemId, limit]);
+
+  return {
+    error,
+    isLoading,
+    isLoadingMore,
+    items,
+    nextCursor,
+    refresh: () => load(undefined, "replace"),
+    loadMore: () => {
+      if (!nextCursor || isLoadingMore) {
+        return Promise.resolve();
+      }
+
+      return load(nextCursor, "append");
+    }
+  };
+}
+
 type SimilarityKind = "similar" | "duplicates";
 
 export function useClosetSimilarity(
@@ -404,38 +651,34 @@ export function useClosetReviewItem(accessToken?: string | null, itemId?: string
   const [isMutating, setIsMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastRefreshRef = useRef(0);
+  const reviewRef = useRef<ClosetItemReviewSnapshot | null>(null);
+  const cacheKey =
+    accessToken && itemId ? buildReviewItemCacheKey(accessToken, itemId) : null;
 
-  async function load() {
+  async function load(options: { silent?: boolean } = {}) {
     if (!accessToken || !itemId) {
       setProcessing(null);
       setExtraction(null);
       setReview(null);
+      reviewRef.current = null;
       setIsLoading(false);
       return;
     }
 
-    setIsLoading(true);
+    if (!options.silent) {
+      setIsLoading(true);
+    }
     setError(null);
 
     try {
-      const [processingSnapshot, extractionSnapshot] = await Promise.all([
-        getClosetProcessingSnapshot(accessToken, itemId),
-        getClosetExtractionSnapshot(accessToken, itemId)
-      ]);
+      const snapshots = await fetchReviewItemSnapshots(accessToken, itemId);
 
-      setProcessing(processingSnapshot);
-      setExtraction(extractionSnapshot);
-
-      try {
-        const reviewSnapshot = await getClosetReviewSnapshot(accessToken, itemId);
-        setReview(reviewSnapshot);
-      } catch (reviewError) {
-        if (reviewError instanceof ApiError && reviewError.code === "review_not_available") {
-          setReview(null);
-        } else {
-          throw reviewError;
-        }
-      }
+      reviewRef.current = snapshots.review;
+      startTransition(() => {
+        setProcessing(snapshots.processing);
+        setExtraction(snapshots.extraction);
+        setReview(snapshots.review);
+      });
 
       lastRefreshRef.current = Date.now();
     } catch (loadError) {
@@ -446,6 +689,29 @@ export function useClosetReviewItem(accessToken?: string | null, itemId?: string
   }
 
   useEffect(() => {
+    if (!accessToken || !itemId) {
+      return;
+    }
+
+    const nextCacheKey = buildReviewItemCacheKey(accessToken, itemId);
+    const cached = getCachedReviewItemSnapshots(nextCacheKey);
+
+    if (cached) {
+      reviewRef.current = cached.review;
+      startTransition(() => {
+        setProcessing(cached.processing);
+        setExtraction(cached.extraction);
+        setReview(cached.review);
+      });
+      setIsLoading(false);
+      void load({ silent: true });
+      return;
+    }
+
+    setProcessing(null);
+    setExtraction(null);
+    setReview(null);
+    reviewRef.current = null;
     void load();
   }, [accessToken, itemId]);
 
@@ -456,7 +722,9 @@ export function useClosetReviewItem(accessToken?: string | null, itemId?: string
   );
 
   async function applyChanges(changes: ClosetReviewFieldChange[]) {
-    if (!accessToken || !itemId || !review) {
+    const currentReview = reviewRef.current;
+
+    if (!accessToken || !itemId || !currentReview) {
       return { ok: false as const, stale: false };
     }
 
@@ -465,10 +733,18 @@ export function useClosetReviewItem(accessToken?: string | null, itemId?: string
 
     try {
       const nextReview = await patchClosetReview(accessToken, itemId, {
-        expected_review_version: review.review_version,
+        expected_review_version: currentReview.review_version,
         changes
       });
+      reviewRef.current = nextReview;
       setReview(nextReview);
+      if (cacheKey) {
+        storeReviewItemSnapshots(cacheKey, {
+          extraction,
+          processing,
+          review: nextReview
+        });
+      }
       return { ok: true as const, stale: false };
     } catch (mutationError) {
       if (mutationError instanceof ApiError && mutationError.code === "stale_review_version") {
@@ -484,7 +760,9 @@ export function useClosetReviewItem(accessToken?: string | null, itemId?: string
   }
 
   async function confirm() {
-    if (!accessToken || !itemId || !review) {
+    const currentReview = reviewRef.current;
+
+    if (!accessToken || !itemId || !currentReview) {
       return { ok: false as const, stale: false };
     }
 
@@ -493,9 +771,17 @@ export function useClosetReviewItem(accessToken?: string | null, itemId?: string
 
     try {
       const nextReview = await confirmClosetReview(accessToken, itemId, {
-        expected_review_version: review.review_version
+        expected_review_version: currentReview.review_version
       });
+      reviewRef.current = nextReview;
       setReview(nextReview);
+      if (cacheKey) {
+        storeReviewItemSnapshots(cacheKey, {
+          extraction,
+          processing,
+          review: nextReview
+        });
+      }
       return { ok: true as const, stale: false };
     } catch (confirmError) {
       if (confirmError instanceof ApiError && confirmError.code === "stale_review_version") {
@@ -522,6 +808,13 @@ export function useClosetReviewItem(accessToken?: string | null, itemId?: string
       const nextReview = await retryClosetReview(accessToken, itemId, {
         step
       });
+      if (cacheKey) {
+        storeReviewItemSnapshots(cacheKey, {
+          extraction,
+          processing,
+          review: nextReview
+        });
+      }
       setReview(nextReview);
       await load();
       return true;
@@ -575,7 +868,7 @@ export function useClosetUpload(accessToken?: string | null) {
         onStageChange: (nextStage) => setStage(nextStage)
       });
       setPath(result.path);
-      setStage("Sent to review");
+      setStage("Sent to processing");
       return result.draft;
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Upload failed.");

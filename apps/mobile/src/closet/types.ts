@@ -321,6 +321,20 @@ export type ClosetRetryRequest = {
   step?: ClosetRetryStep | null;
 };
 
+export type ClosetHistoryEventSnapshot = {
+  id: string;
+  actor_user_id: string | null;
+  actor_type: string;
+  event_type: string;
+  payload: unknown;
+  created_at: string;
+};
+
+export type ClosetHistoryResponse = {
+  items: ClosetHistoryEventSnapshot[];
+  next_cursor: string | null;
+};
+
 export type ClosetBrowseFilters = {
   query?: string;
   category?: string;

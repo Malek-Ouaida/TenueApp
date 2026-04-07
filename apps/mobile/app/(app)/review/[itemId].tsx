@@ -1,11 +1,16 @@
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams, type Href } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 
 import { useAuth } from "../../../src/auth/provider";
-import { useClosetMetadataOptions, useClosetReviewItem } from "../../../src/closet/hooks";
+import {
+  useClosetMetadataOptions,
+  useClosetReviewItem,
+  useReviewQueue
+} from "../../../src/closet/hooks";
+import { ReviewDeckScreen } from "../../../src/closet/ReviewDeckScreen";
 import {
   buildReviewFieldHelper,
   CLOSET_FIELD_ORDER,
@@ -16,7 +21,8 @@ import {
   getReviewRail,
   getRetryStepLabel,
   getStatusChipTone,
-  humanizeStatus
+  humanizeStatus,
+  isReviewableDraft
 } from "../../../src/closet/status";
 import type {
   ClosetFieldCanonicalValue,
@@ -101,9 +107,63 @@ function selectionOptionsForField(
   }
 }
 
-export default function ReviewItemScreen() {
+export default function ReviewItemScreenRoute() {
   const params = useLocalSearchParams<{ itemId: string | string[] }>();
   const itemId = Array.isArray(params.itemId) ? params.itemId[0] : params.itemId;
+  const { session } = useAuth();
+  const reviewQueue = useReviewQueue(session?.access_token, 50);
+  const lastItemIdRef = useRef<string | null>(null);
+
+  const reviewableItems = useMemo(
+    () => reviewQueue.items.filter(isReviewableDraft),
+    [reviewQueue.items]
+  );
+  const processingCount =
+    reviewQueue.sections.find((section) => section.key === "processing")?.items.length ?? 0;
+  const attentionCount =
+    reviewQueue.sections.find((section) => section.key === "needs_attention")?.items.length ?? 0;
+  const currentReviewableIndex = itemId
+    ? reviewableItems.findIndex((item) => item.id === itemId)
+    : -1;
+
+  useEffect(() => {
+    if (!itemId) {
+      router.replace("/review" as Href);
+      return;
+    }
+
+    if (lastItemIdRef.current && lastItemIdRef.current !== itemId) {
+      void reviewQueue.refresh();
+    }
+
+    lastItemIdRef.current = itemId;
+  }, [itemId, reviewQueue.refresh]);
+
+  if (!itemId || (reviewQueue.isLoading && reviewQueue.items.length === 0)) {
+    return (
+      <Screen>
+        <SkeletonBlock height={340} />
+        <SkeletonBlock height={160} />
+        <SkeletonBlock height={220} />
+      </Screen>
+    );
+  }
+
+  if (currentReviewableIndex >= 0) {
+    return (
+      <ReviewDeckScreen
+        attentionCount={attentionCount}
+        itemId={itemId}
+        processingCount={processingCount}
+        reviewableItems={reviewableItems}
+      />
+    );
+  }
+
+  return <LegacyReviewItemScreen itemId={itemId} />;
+}
+
+function LegacyReviewItemScreen({ itemId }: { itemId: string }) {
   const { session } = useAuth();
   const metadata = useClosetMetadataOptions(session?.access_token);
   const reviewFlow = useClosetReviewItem(session?.access_token, itemId);

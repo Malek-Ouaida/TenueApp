@@ -247,6 +247,21 @@ def read_confirmed_items(
     )
 
 
+@router.get("/items/review", response_model=ClosetReviewListResponse)
+def read_review_queue_compat(
+    current_user: CurrentUser,
+    upload_service: Annotated[ClosetDraftUploadService, Depends(get_closet_upload_service)],
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> ClosetReviewListResponse:
+    return read_review_queue(
+        current_user=current_user,
+        upload_service=upload_service,
+        cursor=cursor,
+        limit=limit,
+    )
+
+
 @router.get("/items/{item_id}", response_model=ClosetItemDetailSnapshot)
 def read_confirmed_item_detail(
     item_id: UUID,
