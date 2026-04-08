@@ -4,7 +4,7 @@ import { Animated, Easing, StyleSheet, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 
-import { editorialPalette } from "../../src/auth/editorial";
+import { authPalette } from "../../src/auth/ui";
 import splashLogo from "../../assets/auth/t_black.png";
 
 export default function SplashScreen() {
@@ -125,7 +125,7 @@ export default function SplashScreen() {
         ]}
       >
         <LinearGradient
-          colors={[editorialPalette.background, editorialPalette.background]}
+          colors={[authPalette.background, authPalette.background]}
           end={{ x: 1, y: 1 }}
           start={{ x: 0, y: 0 }}
           style={StyleSheet.absoluteFillObject}
@@ -269,7 +269,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
-    backgroundColor: editorialPalette.background
+    backgroundColor: authPalette.background
   },
   gradientLayer: {
     ...StyleSheet.absoluteFillObject

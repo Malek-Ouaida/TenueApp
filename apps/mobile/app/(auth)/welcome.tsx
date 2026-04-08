@@ -5,12 +5,12 @@ import { Animated, Pressable, StyleSheet, useWindowDimensions, View } from "reac
 import { LinearGradient } from "expo-linear-gradient";
 
 import {
-  EditorialPrimaryButton,
-  EditorialScreen,
+  AuthPrimaryButton,
+  AuthScreen,
   buildFadeUpStyle,
-  editorialPalette,
-  useEditorialIntro
-} from "../../src/auth/editorial";
+  authPalette,
+  useAuthIntroAnimation
+} from "../../src/auth/ui";
 import { fontFamilies } from "../../src/theme";
 import { AppText } from "../../src/ui";
 
@@ -18,7 +18,7 @@ import tenueWordmark from "../../assets/auth/tenue_black.png";
 import welcomeHero from "../../assets/auth/welcome-hero.jpg";
 
 export default function WelcomeScreen() {
-  const intro = useEditorialIntro(4);
+  const intro = useAuthIntroAnimation(4);
   const { height } = useWindowDimensions();
   const [ready, setReady] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -30,7 +30,7 @@ export default function WelcomeScreen() {
   }, []);
 
   return (
-    <EditorialScreen contentStyle={styles.screenContent} scrollable={false}>
+    <AuthScreen contentStyle={styles.screenContent} scrollable={false}>
       <View style={styles.page}>
         <View style={[styles.heroShell, { height: heroHeight }]}>
           <Animated.View
@@ -49,7 +49,7 @@ export default function WelcomeScreen() {
               style={styles.heroImage}
             />
             <LinearGradient
-              colors={["transparent", "transparent", editorialPalette.background]}
+              colors={["transparent", "transparent", authPalette.background]}
               locations={[0, 0.4, 0.95]}
               style={StyleSheet.absoluteFillObject}
             />
@@ -78,7 +78,7 @@ export default function WelcomeScreen() {
           <View style={styles.spacer} />
 
           <Animated.View style={[styles.ctaArea, buildFadeUpStyle(intro[3], 24)]}>
-            <EditorialPrimaryButton
+            <AuthPrimaryButton
               label="Start your wardrobe"
               onPress={() => router.push("/register")}
               style={styles.fullWidthButton}
@@ -93,11 +93,18 @@ export default function WelcomeScreen() {
                   Already have an account? <AppText style={styles.signInStrong}>Sign in</AppText>
                 </AppText>
               </Pressable>
+
+              <Pressable
+                onPress={() => router.push("/")}
+                style={({ pressed }) => [pressed ? styles.pressed : null]}
+              >
+                <AppText style={styles.guestText}>Continue as guest</AppText>
+              </Pressable>
             </View>
           </Animated.View>
         </View>
       </View>
-    </EditorialScreen>
+    </AuthScreen>
   );
 }
 
@@ -109,7 +116,7 @@ const styles = StyleSheet.create({
   },
   page: {
     flex: 1,
-    backgroundColor: editorialPalette.background
+    backgroundColor: authPalette.background
   },
   heroShell: {
     position: "relative",
@@ -127,7 +134,7 @@ const styles = StyleSheet.create({
   heroVignette: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "transparent",
-    shadowColor: editorialPalette.background,
+    shadowColor: authPalette.background,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 90
@@ -153,13 +160,13 @@ const styles = StyleSheet.create({
     fontSize: 36,
     lineHeight: 39,
     letterSpacing: -0.72,
-    color: editorialPalette.text
+    color: authPalette.text
   },
   headlineAccent: {
     fontFamily: fontFamilies.serifRegularItalic,
     fontSize: 36,
     lineHeight: 39,
-    color: editorialPalette.accent
+    color: authPalette.accent
   },
   copyWrap: {
     marginTop: 16
@@ -191,13 +198,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     letterSpacing: -0.14,
-    color: editorialPalette.muted
+    color: authPalette.muted
   },
   signInStrong: {
     fontFamily: fontFamilies.sansSemiBold,
     fontSize: 14,
     lineHeight: 20,
-    color: editorialPalette.text
+    color: authPalette.text
+  },
+  guestText: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#CBD5E1"
   },
   pressed: {
     opacity: 0.72,

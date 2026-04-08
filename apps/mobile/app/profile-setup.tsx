@@ -6,14 +6,14 @@ import { LinearGradient } from "expo-linear-gradient";
 
 import { useAuth } from "../src/auth/provider";
 import {
-  EditorialPrimaryButton,
-  EditorialScreen,
-  EditorialTextField,
+  AuthPrimaryButton,
+  AuthScreen,
+  AuthTextField,
   buildFadeUpStyle,
   buildScaleInStyle,
-  editorialPalette,
-  useEditorialIntro
-} from "../src/auth/editorial";
+  authPalette,
+  useAuthIntroAnimation
+} from "../src/auth/ui";
 import { useProfile } from "../src/profile/hooks";
 import { fontFamilies } from "../src/theme";
 import { AppText } from "../src/ui";
@@ -25,7 +25,7 @@ function normalizeOptionalField(value: string): string | null {
 
 export default function ProfileSetupScreen() {
   const { logoutCurrentUser, session } = useAuth();
-  const intro = useEditorialIntro(6);
+  const intro = useAuthIntroAnimation(6);
   const profile = useProfile({
     accessToken: session?.access_token,
     onUnauthorized: async () => {
@@ -125,7 +125,7 @@ export default function ProfileSetupScreen() {
   const hasInput = username.trim().length > 0 || displayName.trim().length > 0;
 
   return (
-    <EditorialScreen
+    <AuthScreen
       backgroundDecor={
         <View style={styles.topAccent}>
           <Animated.View
@@ -179,7 +179,7 @@ export default function ProfileSetupScreen() {
                 ]
               }}
             >
-              <Ionicons color={editorialPalette.accent} name="sparkles" size={18} />
+              <Ionicons color={authPalette.accent} name="sparkles" size={18} />
             </Animated.View>
           </View>
         </Animated.View>
@@ -205,10 +205,10 @@ export default function ProfileSetupScreen() {
                 }
               ]}
             >
-              <Ionicons color={editorialPalette.accentSoft} name="camera-outline" size={28} />
+              <Ionicons color={authPalette.accentSoft} name="camera-outline" size={28} />
             </Animated.View>
             <LinearGradient
-              colors={[editorialPalette.accent, editorialPalette.accentSoft]}
+              colors={[authPalette.accent, authPalette.accentSoft]}
               end={{ x: 1, y: 1 }}
               start={{ x: 0, y: 0 }}
               style={styles.avatarBadge}
@@ -220,7 +220,7 @@ export default function ProfileSetupScreen() {
 
         <View style={styles.formBlock}>
           <Animated.View style={buildFadeUpStyle(intro[2])}>
-            <EditorialTextField
+            <AuthTextField
               autoCapitalize="none"
               autoCorrect={false}
               label="Username"
@@ -231,7 +231,7 @@ export default function ProfileSetupScreen() {
           </Animated.View>
 
           <Animated.View style={buildFadeUpStyle(intro[3])}>
-            <EditorialTextField
+            <AuthTextField
               label="Display name"
               placeholder="Your name"
               value={displayName}
@@ -240,7 +240,7 @@ export default function ProfileSetupScreen() {
           </Animated.View>
 
           <Animated.View style={buildFadeUpStyle(intro[4], 10)}>
-            <AppText color={editorialPalette.subtle} style={styles.microcopy}>
+            <AppText color={authPalette.subtle} style={styles.microcopy}>
               You can always change this later.
             </AppText>
           </Animated.View>
@@ -256,7 +256,7 @@ export default function ProfileSetupScreen() {
               {profile.error}
             </AppText>
           ) : null}
-          <EditorialPrimaryButton
+          <AuthPrimaryButton
             disabled={!hasInput}
             label="Continue"
             loading={profile.isSaving}
@@ -264,7 +264,7 @@ export default function ProfileSetupScreen() {
           />
         </Animated.View>
       </View>
-    </EditorialScreen>
+    </AuthScreen>
   );
 }
 
@@ -316,11 +316,11 @@ const styles = StyleSheet.create({
     borderRadius: 60,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: editorialPalette.accentSurface,
+    backgroundColor: authPalette.accentSurface,
     borderWidth: 2,
     borderStyle: "dashed",
-    borderColor: editorialPalette.accentLine,
-    shadowColor: editorialPalette.accent,
+    borderColor: authPalette.accentLine,
+    shadowColor: authPalette.accent,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.1,
     shadowRadius: 20,
@@ -335,7 +335,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: editorialPalette.accent
+    backgroundColor: authPalette.accent
   },
   avatarBadgeText: {
     fontFamily: fontFamilies.sansSemiBold,

@@ -23,7 +23,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { colors, fontFamilies } from "../theme";
 import { AppText } from "../ui";
 
-export const editorialPalette = {
+export const authPalette = {
   background: "#FAF9F7",
   surface: "#FFFFFF",
   text: colors.darkText,
@@ -39,7 +39,7 @@ export const editorialPalette = {
   shadow: "rgba(15, 23, 42, 0.08)"
 } as const;
 
-type EditorialScreenProps = {
+type AuthScreenProps = {
   children: ReactNode;
   footer?: ReactNode;
   scrollable?: boolean;
@@ -47,7 +47,7 @@ type EditorialScreenProps = {
   backgroundDecor?: ReactNode;
 };
 
-type EditorialTextFieldProps = Omit<TextInputProps, "style"> & {
+type AuthTextFieldProps = Omit<TextInputProps, "style"> & {
   label: string;
   helper?: string | null;
   error?: string | null;
@@ -57,7 +57,7 @@ type EditorialTextFieldProps = Omit<TextInputProps, "style"> & {
   containerStyle?: StyleProp<ViewStyle>;
 };
 
-type EditorialPrimaryButtonProps = {
+type AuthPrimaryButtonProps = {
   label: string;
   onPress: () => void;
   disabled?: boolean;
@@ -65,13 +65,13 @@ type EditorialPrimaryButtonProps = {
   style?: StyleProp<ViewStyle>;
 };
 
-export function EditorialScreen({
+export function AuthScreen({
   backgroundDecor,
   children,
   contentStyle,
   footer,
   scrollable = true
-}: EditorialScreenProps) {
+}: AuthScreenProps) {
   const insets = useSafeAreaInsets();
   const content = (
     <View
@@ -127,7 +127,7 @@ export function EditorialScreen({
   );
 }
 
-export function EditorialBackButton({
+export function AuthBackButton({
   onPress,
   variant = "subtle"
 }: {
@@ -143,12 +143,12 @@ export function EditorialBackButton({
         pressed ? styles.pressed : null
       ]}
     >
-      <Feather color={editorialPalette.text} name="arrow-left" size={18} />
+      <Feather color={authPalette.text} name="arrow-left" size={18} />
     </Pressable>
   );
 }
 
-export function EditorialTextField({
+export function AuthTextField({
   containerStyle,
   error,
   helper,
@@ -159,18 +159,18 @@ export function EditorialTextField({
   rightAccessory,
   style,
   ...props
-}: EditorialTextFieldProps) {
+}: AuthTextFieldProps) {
   const [focused, setFocused] = useState(false);
   const labelColor = error
     ? colors.danger
     : focused
-      ? editorialPalette.accent
-      : editorialPalette.muted;
+      ? authPalette.accent
+      : authPalette.muted;
   const borderColor = error
     ? colors.danger
     : focused
-      ? editorialPalette.accent
-      : editorialPalette.border;
+      ? authPalette.accent
+      : authPalette.border;
 
   function handleFocus(event: Parameters<NonNullable<TextInputProps["onFocus"]>>[0]) {
     setFocused(true);
@@ -197,7 +197,7 @@ export function EditorialTextField({
           {...props}
           onBlur={handleBlur}
           onFocus={handleFocus}
-          placeholderTextColor={editorialPalette.subtle}
+          placeholderTextColor={authPalette.subtle}
           style={[
             styles.input,
             leftIcon ? styles.inputWithLeadingAccessory : null,
@@ -213,7 +213,7 @@ export function EditorialTextField({
           {error}
         </AppText>
       ) : helper ? (
-        <AppText color={editorialPalette.subtle} style={styles.messageText}>
+        <AppText color={authPalette.subtle} style={styles.messageText}>
           {helper}
         </AppText>
       ) : null}
@@ -221,13 +221,13 @@ export function EditorialTextField({
   );
 }
 
-export function EditorialPrimaryButton({
+export function AuthPrimaryButton({
   disabled = false,
   label,
   loading = false,
   onPress,
   style
-}: EditorialPrimaryButtonProps) {
+}: AuthPrimaryButtonProps) {
   return (
     <Pressable
       disabled={disabled || loading}
@@ -241,17 +241,17 @@ export function EditorialPrimaryButton({
       <LinearGradient
         colors={
           disabled
-            ? [editorialPalette.border, editorialPalette.border]
-            : [editorialPalette.accent, editorialPalette.accentSoft]
+            ? [authPalette.border, authPalette.border]
+            : [authPalette.accent, authPalette.accentSoft]
         }
         end={{ x: 1, y: 1 }}
         start={{ x: 0, y: 0 }}
         style={[styles.primaryButton, disabled ? styles.primaryButtonDisabled : null]}
       >
         {loading ? (
-          <ActivityIndicator color={disabled ? editorialPalette.subtle : colors.white} />
+          <ActivityIndicator color={disabled ? authPalette.subtle : colors.white} />
         ) : (
-          <AppText color={disabled ? editorialPalette.subtle : colors.white} style={styles.buttonLabel}>
+          <AppText color={disabled ? authPalette.subtle : colors.white} style={styles.buttonLabel}>
             {label}
           </AppText>
         )}
@@ -271,11 +271,11 @@ export function AuthFooterLink({
 }) {
   return (
     <View style={styles.footerLinkRow}>
-      <AppText color={editorialPalette.muted} style={styles.footerLinkText}>
+      <AppText color={authPalette.muted} style={styles.footerLinkText}>
         {prefix}
       </AppText>
       <Pressable onPress={onPress} style={({ pressed }) => [pressed ? styles.pressed : null]}>
-        <AppText color={editorialPalette.text} style={[styles.footerLinkText, styles.footerLinkTextStrong]}>
+        <AppText color={authPalette.text} style={[styles.footerLinkText, styles.footerLinkTextStrong]}>
           {label}
         </AppText>
       </Pressable>
@@ -283,7 +283,7 @@ export function AuthFooterLink({
   );
 }
 
-export function useEditorialIntro(count: number) {
+export function useAuthIntroAnimation(count: number) {
   const values = useRef(Array.from({ length: count }, () => new Animated.Value(0))).current;
 
   useEffect(() => {
@@ -355,11 +355,11 @@ export function buildScaleInStyle(
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: editorialPalette.background
+    backgroundColor: authPalette.background
   },
   page: {
     flex: 1,
-    backgroundColor: editorialPalette.background
+    backgroundColor: authPalette.background
   },
   flex: {
     flex: 1
@@ -382,7 +382,7 @@ const styles = StyleSheet.create({
   footer: {
     paddingHorizontal: 28,
     paddingTop: 16,
-    backgroundColor: editorialPalette.background
+    backgroundColor: authPalette.background
   },
   backButton: {
     width: 40,
@@ -395,7 +395,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.04)"
   },
   backButtonSurface: {
-    backgroundColor: editorialPalette.surface,
+    backgroundColor: authPalette.surface,
     shadowColor: "rgba(0, 0, 0, 0.08)",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 1,
@@ -416,12 +416,12 @@ const styles = StyleSheet.create({
     minHeight: 52,
     borderRadius: 16,
     borderWidth: 2,
-    backgroundColor: editorialPalette.surface,
+    backgroundColor: authPalette.surface,
     flexDirection: "row",
     alignItems: "center"
   },
   inputShellFocused: {
-    shadowColor: editorialPalette.accent,
+    shadowColor: authPalette.accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.08,
     shadowRadius: 8,
@@ -437,7 +437,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 52,
     paddingHorizontal: 20,
-    color: editorialPalette.text,
+    color: authPalette.text,
     fontFamily: fontFamilies.sansRegular,
     fontSize: 15
   },
@@ -466,7 +466,7 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: editorialPalette.accent,
+    shadowColor: authPalette.accent,
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.3,
     shadowRadius: 20,

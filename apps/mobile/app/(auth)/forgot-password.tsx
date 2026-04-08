@@ -4,47 +4,47 @@ import { useState } from "react";
 import { Animated, Pressable, StyleSheet, View } from "react-native";
 
 import {
-  EditorialBackButton,
-  EditorialPrimaryButton,
-  EditorialScreen,
-  EditorialTextField,
+  AuthBackButton,
+  AuthPrimaryButton,
+  AuthScreen,
+  AuthTextField,
   buildFadeUpStyle,
   buildScaleInStyle,
-  editorialPalette,
-  useEditorialIntro
-} from "../../src/auth/editorial";
+  authPalette,
+  useAuthIntroAnimation
+} from "../../src/auth/ui";
 import { fontFamilies } from "../../src/theme";
 import { AppText } from "../../src/ui";
 
 export default function ForgotPasswordScreen() {
-  const intro = useEditorialIntro(4);
+  const intro = useAuthIntroAnimation(4);
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const isValid = email.includes("@");
 
   return (
-    <EditorialScreen scrollable={false}>
+    <AuthScreen scrollable={false}>
       <View style={styles.page}>
       <Animated.View style={buildFadeUpStyle(intro[0], -8)}>
-        <EditorialBackButton onPress={() => router.replace("/login")} variant="surface" />
+        <AuthBackButton onPress={() => router.back()} variant="surface" />
       </Animated.View>
 
       {!sent ? (
         <>
           <Animated.View style={[styles.titleBlock, buildFadeUpStyle(intro[1])]}>
             <AppText style={styles.title}>Reset your{"\n"}password</AppText>
-            <AppText color={editorialPalette.muted} style={styles.subtitle}>
+            <AppText color={authPalette.muted} style={styles.subtitle}>
               Enter your email and we&apos;ll send you a link to get back in.
             </AppText>
           </Animated.View>
 
           <Animated.View style={[styles.formBlock, buildFadeUpStyle(intro[2])]}>
-            <EditorialTextField
+            <AuthTextField
               autoCapitalize="none"
               autoComplete="email"
               keyboardType="email-address"
               label="Email"
-              leftIcon={<Feather color={editorialPalette.muted} name="mail" size={18} />}
+              leftIcon={<Feather color={authPalette.muted} name="mail" size={18} />}
               placeholder="Your email"
               value={email}
               onChangeText={setEmail}
@@ -52,7 +52,7 @@ export default function ForgotPasswordScreen() {
           </Animated.View>
 
           <Animated.View style={[styles.ctaBlock, buildFadeUpStyle(intro[3], 20)]}>
-            <EditorialPrimaryButton
+            <AuthPrimaryButton
               disabled={!isValid}
               label="Send reset link"
               onPress={() => setSent(true)}
@@ -63,12 +63,12 @@ export default function ForgotPasswordScreen() {
       ) : (
         <Animated.View style={[styles.successState, buildScaleInStyle(intro[3])]}>
           <View style={styles.successIcon}>
-            <Feather color={editorialPalette.text} name="check" size={28} />
+            <Feather color={authPalette.text} name="check" size={28} />
           </View>
           <AppText style={styles.successTitle}>Check your inbox</AppText>
-          <AppText color={editorialPalette.muted} style={styles.successBody}>
+          <AppText color={authPalette.muted} style={styles.successBody}>
             We sent a reset link to{"\n"}
-            <AppText color={editorialPalette.text} style={styles.successEmail}>
+            <AppText color={authPalette.text} style={styles.successEmail}>
               {email}
             </AppText>
           </AppText>
@@ -83,7 +83,7 @@ export default function ForgotPasswordScreen() {
         </Animated.View>
       )}
       </View>
-    </EditorialScreen>
+    </AuthScreen>
   );
 }
 
@@ -156,8 +156,8 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: editorialPalette.surface,
-    shadowColor: editorialPalette.shadow,
+    backgroundColor: authPalette.surface,
+    shadowColor: authPalette.shadow,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 1,
     shadowRadius: 16,
