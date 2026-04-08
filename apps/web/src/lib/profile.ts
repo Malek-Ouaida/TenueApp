@@ -25,7 +25,8 @@ export async function getCurrentProfile(accessToken: string): Promise<Profile> {
   const response = await apiRequest<ProfileResponse>("/profiles/me", {
     headers: {
       Authorization: `Bearer ${accessToken}`
-    }
+    },
+    ttlSeconds: 10
   });
 
   return response.profile;
