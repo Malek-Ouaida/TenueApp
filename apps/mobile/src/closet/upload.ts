@@ -480,6 +480,27 @@ export async function selectSingleImage(source: "camera" | "library") {
   return result.canceled ? null : result.assets[0] ?? null;
 }
 
+export async function selectImagesFromLibrary(options?: {
+  multiple?: boolean;
+  selectionLimit?: number;
+}) {
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) {
+    throw new Error("Photo Library access is required to choose a closet item image.");
+  }
+
+  const multiple = options?.multiple ?? false;
+  const result = await ImagePicker.launchImageLibraryAsync({
+    allowsEditing: false,
+    allowsMultipleSelection: multiple,
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    quality: 1,
+    selectionLimit: multiple ? (options?.selectionLimit ?? 10) : 1
+  });
+
+  return result.canceled ? [] : result.assets;
+}
+
 export async function uploadClosetAsset(params: {
   accessToken: string;
   asset: ImagePicker.ImagePickerAsset;
@@ -525,4 +546,33 @@ export async function uploadClosetAsset(params: {
     path: nextPath,
     prepared
   };
+}
+
+export async function uploadClosetAssets(params: {
+  accessToken: string;
+  assets: ImagePicker.ImagePickerAsset[];
+  onStageChange?: (stage: string, progress: { index: number; total: number }) => void;
+  title?: string | null;
+}) {
+  const drafts: ClosetDraftSnapshot[] = [];
+
+  for (const [index, asset] of params.assets.entries()) {
+    const total = params.assets.length;
+    const progress = { index: index + 1, total };
+    const logicalKey = buildLogicalRetryKey(asset);
+
+    const result = await uploadClosetAsset({
+      accessToken: params.accessToken,
+      asset,
+      path: createUploadIdempotencyPath(logicalKey),
+      title: params.title,
+      onStageChange: (stage) => {
+        params.onStageChange?.(stage, progress);
+      }
+    });
+
+    drafts.push(result.draft);
+  }
+
+  return drafts;
 }
