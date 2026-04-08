@@ -1,9 +1,13 @@
-import * as Haptics from "expo-haptics";
 import { router, type Href } from "expo-router";
 import { StyleSheet, View } from "react-native";
 
 import { useAuth } from "../../../src/auth/provider";
 import { useClosetUpload } from "../../../src/closet/hooks";
+import {
+  triggerErrorHaptic,
+  triggerSelectionHaptic,
+  triggerSuccessHaptic
+} from "../../../src/lib/haptics";
 import { colors, spacing } from "../../../src/theme";
 import {
   AppText,
@@ -20,15 +24,15 @@ export default function AddScreen() {
 
   async function handleSource(source: "camera" | "library") {
     try {
-      await Haptics.selectionAsync();
+      await triggerSelectionHaptic();
       const draft = await upload.selectAndUpload(source);
       if (!draft) {
         return;
       }
 
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await triggerSuccessHaptic();
     } catch {
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      await triggerErrorHaptic();
     }
   }
 
@@ -39,9 +43,9 @@ export default function AddScreen() {
         return;
       }
 
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await triggerSuccessHaptic();
     } catch {
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      await triggerErrorHaptic();
     }
   }
 
