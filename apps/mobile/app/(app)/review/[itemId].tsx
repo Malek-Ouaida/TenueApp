@@ -1,5 +1,4 @@
 import { Image } from "expo-image";
-import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams, type Href } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
@@ -10,6 +9,11 @@ import {
   useClosetReviewItem,
   useReviewQueue
 } from "../../../src/closet/hooks";
+import {
+  triggerErrorHaptic,
+  triggerSelectionHaptic,
+  triggerSuccessHaptic
+} from "../../../src/lib/haptics";
 import { ReviewDeckScreen } from "../../../src/closet/ReviewDeckScreen";
 import {
   buildReviewFieldHelper,
@@ -190,7 +194,7 @@ function LegacyReviewItemScreen({ itemId }: { itemId: string }) {
     setNotice(null);
     const result = await reviewFlow.applyChanges([change]);
     if (result.ok) {
-      await Haptics.selectionAsync();
+      await triggerSelectionHaptic();
       return;
     }
 
@@ -256,7 +260,7 @@ function LegacyReviewItemScreen({ itemId }: { itemId: string }) {
     const result = await reviewFlow.confirm();
 
     if (result.ok) {
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await triggerSuccessHaptic();
       return;
     }
 
@@ -265,15 +269,15 @@ function LegacyReviewItemScreen({ itemId }: { itemId: string }) {
       return;
     }
 
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    await triggerErrorHaptic();
   }
 
   async function retryItem() {
     const success = await reviewFlow.retry(review?.retry_action.default_step);
     if (success) {
-      await Haptics.selectionAsync();
+      await triggerSelectionHaptic();
     } else {
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      await triggerErrorHaptic();
     }
   }
 

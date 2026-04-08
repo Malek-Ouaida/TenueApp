@@ -1,11 +1,11 @@
 import { router, type Href } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import * as Haptics from "expo-haptics";
 
 import { useAuth } from "../../../src/auth/provider";
 import { useReviewQueue } from "../../../src/closet/hooks";
 import { useClosetInsights } from "../../../src/closet/insights";
+import { triggerSuccessHaptic } from "../../../src/lib/haptics";
 import { useProfile } from "../../../src/profile/hooks";
 import { colors, radius, spacing } from "../../../src/theme";
 import {
@@ -60,7 +60,7 @@ export default function ProfileScreen() {
       return;
     }
 
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    await triggerSuccessHaptic();
     setNotice("Profile saved.");
   }
 

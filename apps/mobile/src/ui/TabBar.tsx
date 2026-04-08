@@ -1,9 +1,9 @@
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
 import { useMemo, useState, type ReactNode } from "react";
 import { Modal, Pressable, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { triggerSelectionHaptic } from "../lib/haptics";
 import { colors, spacing } from "../theme";
 import { AppText } from "./Typography";
 
@@ -59,7 +59,7 @@ export function TenueTabBar({ navigation, state }: TenueTabBarProps) {
     }
 
     setMenuOpen(false);
-    void Haptics.selectionAsync();
+    void triggerSelectionHaptic();
     navigation.navigate(routeName);
   }
 
@@ -107,7 +107,7 @@ export function TenueTabBar({ navigation, state }: TenueTabBarProps) {
           <Pressable
             accessibilityRole="button"
             onPress={() => {
-              void Haptics.selectionAsync();
+              void triggerSelectionHaptic();
               setMenuOpen((current) => !current);
             }}
             style={({ pressed }) => [

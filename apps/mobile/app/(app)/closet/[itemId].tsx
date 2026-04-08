@@ -1,5 +1,4 @@
 import { Feather } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams, type Href } from "expo-router";
 import { useMemo, useState } from "react";
@@ -15,6 +14,11 @@ import { useAuth } from "../../../src/auth/provider";
 import { useConfirmedClosetBrowse, useClosetItemDetail } from "../../../src/closet/hooks";
 import { useClosetItemUsageIndex } from "../../../src/closet/insights";
 import { compactList, humanizeEnum } from "../../../src/lib/format";
+import {
+  triggerErrorHaptic,
+  triggerSelectionHaptic,
+  triggerSuccessHaptic
+} from "../../../src/lib/haptics";
 import { colors, fontFamilies } from "../../../src/theme";
 import { AppText, ModalSheet, SkeletonBlock } from "../../../src/ui";
 
@@ -96,12 +100,12 @@ export default function ClosetItemDetailScreen() {
   async function archiveItem() {
     const archived = await detail.archive();
     if (archived) {
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await triggerSuccessHaptic();
       router.replace("/closet" as Href);
       return;
     }
 
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    await triggerErrorHaptic();
     setActionMessage(detail.error ?? "Archive failed.");
   }
 
@@ -129,10 +133,10 @@ export default function ClosetItemDetailScreen() {
           const threshold = 64;
 
           if (gesture.dx < -threshold && nextItem) {
-            await Haptics.selectionAsync();
+            await triggerSelectionHaptic();
             router.replace(`/closet/${nextItem.item_id}` as Href);
           } else if (gesture.dx > threshold && previousItem) {
-            await Haptics.selectionAsync();
+            await triggerSelectionHaptic();
             router.replace(`/closet/${previousItem.item_id}` as Href);
           }
 

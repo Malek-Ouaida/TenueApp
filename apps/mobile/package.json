@@ -8,7 +8,9 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node -e \"console.log('apps/mobile: no automated tests for Phase 03 auth integration yet')\"",
-    "format": "node -e \"console.log('apps/mobile: no formatter changes in Phase 03 auth foundation')\""
+    "format": "node -e \"console.log('apps/mobile: no formatter changes in Phase 03 auth foundation')\"",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
