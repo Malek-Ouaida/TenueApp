@@ -352,6 +352,62 @@ def test_wear_log_detail_and_timeline_pagination(
     assert [item["wear_date"] for item in second_page.json()["items"]] == ["2026-04-03"]
 
 
+def test_wear_log_reads_degrade_when_presigned_download_generation_fails(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: Any,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+    monkeypatch: Any,
+) -> None:
+    headers = register_and_get_headers(client, email="wear-presign-failure@example.com")
+    item_id = create_confirmed_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        headers=headers,
+        title="Fallback wear tee",
+        key_prefix="wear-presign-item",
+    )
+
+    create_response = create_wear_log(
+        client,
+        headers,
+        wear_date="2026-04-08",
+        items=[{"closet_item_id": str(item_id), "role": "top"}],
+    )
+    assert create_response.status_code == 201
+    wear_log_id = create_response.json()["id"]
+
+    def fail_presigned_download(*, bucket: str, key: str, expires_in_seconds: int):
+        raise RuntimeError(f"unable to presign {bucket}/{key}")
+
+    monkeypatch.setattr(
+        fake_storage_client,
+        "generate_presigned_download",
+        fail_presigned_download,
+    )
+
+    timeline_response = client.get("/wear-logs", headers=headers)
+    assert timeline_response.status_code == 200
+    assert timeline_response.json()["items"][0]["id"] == wear_log_id
+    assert timeline_response.json()["items"][0]["cover_image"] is None
+
+    detail_response = client.get(f"/wear-logs/{wear_log_id}", headers=headers)
+    assert detail_response.status_code == 200
+    assert detail_response.json()["cover_image"] is None
+    assert detail_response.json()["items"][0]["display_image"] is None
+
+    calendar_response = client.get(
+        "/wear-logs/calendar?start_date=2026-04-08&end_date=2026-04-08",
+        headers=headers,
+    )
+    assert calendar_response.status_code == 200
+    assert calendar_response.json()["days"][0]["cover_image"] is None
+
+
 def test_update_wear_log_metadata_only(
     client: TestClient,
     db_session: Session,

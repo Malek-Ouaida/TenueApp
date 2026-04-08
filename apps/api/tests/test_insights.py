@@ -363,3 +363,82 @@ def test_category_usage_and_timeline_read_from_snapshots(
             "unique_item_count": 0,
         },
     ]
+
+
+def test_insight_reads_degrade_when_presigned_download_generation_fails(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: Any,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+    monkeypatch: Any,
+) -> None:
+    headers = register_and_get_headers(client, email="insights-presign-failure@example.com")
+    top_item_id = create_confirmed_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        headers=headers,
+        title="Fallback tee",
+        key_prefix="insights-presign-top",
+    )
+    bottom_item_id = create_confirmed_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        headers=headers,
+        title="Fallback trouser",
+        key_prefix="insights-presign-bottom",
+        raw_fields=build_raw_fields(category="bottom", subcategory="trousers", color="black"),
+    )
+
+    outfit_response = create_outfit(
+        client,
+        headers,
+        title="Fallback uniform",
+        items=[
+            {"closet_item_id": str(top_item_id), "role": "top"},
+            {"closet_item_id": str(bottom_item_id), "role": "bottom"},
+        ],
+        is_favorite=True,
+    )
+    assert outfit_response.status_code == 201
+
+    wear_response = create_wear_log(
+        client,
+        headers,
+        wear_date="2026-04-21",
+        outfit_id=outfit_response.json()["id"],
+    )
+    assert wear_response.status_code == 201
+
+    def fail_presigned_download(*, bucket: str, key: str, expires_in_seconds: int):
+        raise RuntimeError(f"unable to presign {bucket}/{key}")
+
+    monkeypatch.setattr(
+        fake_storage_client,
+        "generate_presigned_download",
+        fail_presigned_download,
+    )
+
+    items_response = client.get("/insights/items", headers=headers)
+    assert items_response.status_code == 200
+    assert items_response.json()["items"][0]["display_image"] is None
+
+    outfits_response = client.get("/insights/outfits", headers=headers)
+    assert outfits_response.status_code == 200
+    assert outfits_response.json()["items"][0]["cover_image"] is None
+
+    never_worn_response = client.get("/insights/never-worn", headers=headers)
+    assert never_worn_response.status_code == 200
+
+    timeline_response = client.get(
+        "/insights/timeline?start_date=2026-04-21&end_date=2026-04-21",
+        headers=headers,
+    )
+    assert timeline_response.status_code == 200
+    assert timeline_response.json()["points"][0]["wear_log_count"] == 1

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -29,6 +30,8 @@ from app.domains.wear.models import (
     WearLogSource,
 )
 from app.domains.wear.repository import WearRepository
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -826,11 +829,23 @@ class WearService:
         if asset is None:
             return None
 
-        presigned_download = self.storage.generate_presigned_download(
-            bucket=asset.bucket,
-            key=asset.key,
-            expires_in_seconds=settings.closet_media_download_ttl_seconds,
-        )
+        try:
+            presigned_download = self.storage.generate_presigned_download(
+                bucket=asset.bucket,
+                key=asset.key,
+                expires_in_seconds=settings.closet_media_download_ttl_seconds,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to generate wear image download URL.",
+                extra={
+                    "asset_id": str(asset.id),
+                    "bucket": asset.bucket,
+                    "key": asset.key,
+                },
+                exc_info=True,
+            )
+            return None
         image_id_raw = snapshot_image.get("image_id")
         position_raw = snapshot_image.get("position")
         return ProcessingSnapshotImage(

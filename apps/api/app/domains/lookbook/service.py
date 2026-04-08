@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -14,6 +15,8 @@ from app.domains.lookbook.errors import LookbookError
 from app.domains.lookbook.models import Lookbook, LookbookEntry, LookbookEntryType, utcnow
 from app.domains.lookbook.repository import LookbookRepository
 from app.domains.wear.models import Outfit, OutfitItem
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,15 @@ class LookbookEntrySnapshot:
     outfit: LookbookOutfitReferenceSnapshot | None
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class LookbookFlattenedEntrySnapshot:
+    lookbook_id: UUID
+    lookbook_title: str
+    lookbook_description: str | None
+    lookbook_cover_image: PrivateImageSnapshot | None
+    entry: LookbookEntrySnapshot
 
 
 @dataclass(frozen=True)
@@ -189,6 +201,21 @@ class LookbookService:
         next_cursor = encode_offset_cursor(offset + len(visible_entries)) if has_more else None
         return snapshots, next_cursor
 
+    def list_entries_for_user(
+        self,
+        *,
+        user_id: UUID,
+        cursor: str | None,
+        limit: int,
+    ) -> tuple[list[LookbookFlattenedEntrySnapshot], str | None]:
+        offset = decode_offset_cursor(cursor, error_cls=InvalidLookbookEntryCursorError)
+        rows = self.repository.list_entries_for_user(user_id=user_id, offset=offset, limit=limit + 1)
+        has_more = len(rows) > limit
+        visible_rows = rows[:limit]
+        snapshots = self._build_flattened_entry_snapshots(user_id=user_id, rows=visible_rows)
+        next_cursor = encode_offset_cursor(offset + len(visible_rows)) if has_more else None
+        return snapshots, next_cursor
+
     def get_entry_snapshot(
         self,
         *,
@@ -201,6 +228,17 @@ class LookbookService:
         if entry is None:
             raise LookbookError(404, "Lookbook entry not found.")
         return self._hydrate_entries(user_id=user_id, entries=[entry])[0]
+
+    def get_entry_snapshot_for_user(
+        self,
+        *,
+        entry_id: UUID,
+        user_id: UUID,
+    ) -> LookbookFlattenedEntrySnapshot:
+        row = self.repository.get_entry_for_user(entry_id=entry_id, user_id=user_id)
+        if row is None:
+            raise LookbookError(404, "Lookbook entry not found.")
+        return self._build_flattened_entry_snapshots(user_id=user_id, rows=[row])[0]
 
     def create_outfit_entry(
         self,
@@ -353,6 +391,31 @@ class LookbookService:
             for lookbook in lookbooks
         ]
 
+    def _build_flattened_entry_snapshots(
+        self,
+        *,
+        user_id: UUID,
+        rows: list[tuple[Lookbook, LookbookEntry]],
+    ) -> list[LookbookFlattenedEntrySnapshot]:
+        if not rows:
+            return []
+
+        entry_snapshots = self._hydrate_entries(
+            user_id=user_id,
+            entries=[entry for _, entry in rows],
+        )
+
+        return [
+            LookbookFlattenedEntrySnapshot(
+                lookbook_id=lookbook.id,
+                lookbook_title=lookbook.title,
+                lookbook_description=lookbook.description,
+                lookbook_cover_image=None,
+                entry=entry_snapshot,
+            )
+            for (lookbook, _), entry_snapshot in zip(rows, entry_snapshots, strict=False)
+        ]
+
     def _hydrate_entries(
         self,
         *,
@@ -382,7 +445,7 @@ class LookbookService:
         for entry in entries:
             image = None
             if entry.image_asset_id is not None:
-                image = self._build_private_image_snapshot(image_assets[entry.image_asset_id])
+                image = self._try_build_private_image_snapshot(image_assets[entry.image_asset_id])
 
             outfit = None
             if entry.outfit_id is not None:
@@ -458,7 +521,9 @@ class LookbookService:
             ):
                 image_record = image_records.get(role)
                 if image_record is not None:
-                    return self._build_private_image_snapshot(image_record[1])
+                    snapshot = self._try_build_private_image_snapshot(image_record[1])
+                    if snapshot is not None:
+                        return snapshot
         return None
 
     def _build_private_image_snapshot(self, asset: MediaAsset) -> PrivateImageSnapshot:
@@ -475,6 +540,21 @@ class LookbookService:
             url=presigned_download.url,
             expires_at=presigned_download.expires_at,
         )
+
+    def _try_build_private_image_snapshot(self, asset: MediaAsset) -> PrivateImageSnapshot | None:
+        try:
+            return self._build_private_image_snapshot(asset)
+        except Exception:
+            logger.warning(
+                "Failed to generate lookbook image download URL.",
+                extra={
+                    "asset_id": str(asset.id),
+                    "bucket": asset.bucket,
+                    "key": asset.key,
+                },
+                exc_info=True,
+            )
+            return None
 
     def _build_cover_image(
         self,

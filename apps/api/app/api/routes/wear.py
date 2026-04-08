@@ -72,6 +72,8 @@ def read_wear_logs(
         )
     except InvalidWearHistoryCursorError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except WearServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     return WearLogTimelineResponse(
         items=[build_wear_log_timeline_item_snapshot(item) for item in items],
