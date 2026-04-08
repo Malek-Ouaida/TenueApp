@@ -195,7 +195,7 @@ export default function ProfileScreen() {
         <Button label="Save Profile" loading={profile.isSaving} onPress={() => void handleSave()} />
       </Card>
 
-      <Pressable onPress={() => router.push("/insights" as Href)}>
+      <Pressable onPress={() => router.push("/stats" as Href)}>
         <Card tone="organize">
           <AppText color={colors.textSubtle} variant="eyebrow">
             Wardrobe intelligence
