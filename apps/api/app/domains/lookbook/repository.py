@@ -105,6 +105,22 @@ class LookbookRepository:
         )
         return self.session.execute(statement).scalar_one_or_none()
 
+    def get_entry_for_user(
+        self,
+        *,
+        entry_id: UUID,
+        user_id: UUID,
+    ) -> tuple[Lookbook, LookbookEntry] | None:
+        statement = (
+            select(Lookbook, LookbookEntry)
+            .join(LookbookEntry, LookbookEntry.lookbook_id == Lookbook.id)
+            .where(
+                LookbookEntry.id == entry_id,
+                Lookbook.user_id == user_id,
+            )
+        )
+        return self.session.execute(statement).one_or_none()
+
     def list_entries_for_lookbook(
         self,
         *,
@@ -120,6 +136,23 @@ class LookbookRepository:
             .limit(limit)
         )
         return list(self.session.execute(statement).scalars())
+
+    def list_entries_for_user(
+        self,
+        *,
+        user_id: UUID,
+        offset: int,
+        limit: int,
+    ) -> list[tuple[Lookbook, LookbookEntry]]:
+        statement = (
+            select(Lookbook, LookbookEntry)
+            .join(LookbookEntry, LookbookEntry.lookbook_id == Lookbook.id)
+            .where(Lookbook.user_id == user_id)
+            .order_by(LookbookEntry.updated_at.desc(), LookbookEntry.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.execute(statement).all())
 
     def list_all_entries_for_lookbook(self, *, lookbook_id: UUID) -> list[LookbookEntry]:
         statement = (

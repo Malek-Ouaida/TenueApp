@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
@@ -17,6 +18,8 @@ from app.domains.closet.models import (
 )
 from app.domains.wear.models import Outfit, WearLog
 from app.domains.wear.repository import WearRepository
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -710,11 +713,23 @@ class InsightService:
             return None
 
         item_image, asset = image_record
-        presigned_download = self.storage.generate_presigned_download(
-            bucket=asset.bucket,
-            key=asset.key,
-            expires_in_seconds=settings.closet_media_download_ttl_seconds,
-        )
+        try:
+            presigned_download = self.storage.generate_presigned_download(
+                bucket=asset.bucket,
+                key=asset.key,
+                expires_in_seconds=settings.closet_media_download_ttl_seconds,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to generate insight image download URL.",
+                extra={
+                    "asset_id": str(asset.id),
+                    "bucket": asset.bucket,
+                    "key": asset.key,
+                },
+                exc_info=True,
+            )
+            return None
         return ProcessingSnapshotImage(
             asset_id=asset.id,
             image_id=item_image.id,

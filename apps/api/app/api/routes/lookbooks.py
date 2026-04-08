@@ -12,6 +12,8 @@ from app.api.schemas.lookbooks import (
     LookbookDetailSnapshot,
     LookbookEntriesReorderRequest,
     LookbookEntryCreateRequest,
+    LookbookFlattenedEntryListResponse,
+    LookbookFlattenedEntrySnapshot,
     LookbookEntryListResponse,
     LookbookEntrySnapshot,
     LookbookEntryTypeValue,
@@ -33,6 +35,9 @@ from app.domains.lookbook.service import (
 )
 from app.domains.lookbook.service import (
     LookbookDetailSnapshot as LookbookDetailView,
+)
+from app.domains.lookbook.service import (
+    LookbookFlattenedEntrySnapshot as LookbookFlattenedEntryView,
 )
 from app.domains.lookbook.service import LookbookEntrySnapshot as LookbookEntryView
 from app.domains.lookbook.service import LookbookOutfitReferenceSnapshot as LookbookOutfitView
@@ -82,6 +87,47 @@ def read_lookbooks(
         items=[build_lookbook_summary_snapshot(item) for item in items],
         next_cursor=next_cursor,
     )
+
+
+@router.get("/entries", response_model=LookbookFlattenedEntryListResponse)
+def read_flattened_lookbook_entries(
+    current_user: CurrentUser,
+    lookbook_service: Annotated[LookbookService, Depends(get_lookbook_service)],
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> LookbookFlattenedEntryListResponse:
+    try:
+        items, next_cursor = lookbook_service.list_entries_for_user(
+            user_id=current_user.id,
+            cursor=cursor,
+            limit=limit,
+        )
+    except InvalidLookbookEntryCursorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookbookError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    return LookbookFlattenedEntryListResponse(
+        items=[build_flattened_lookbook_entry_snapshot(item) for item in items],
+        next_cursor=next_cursor,
+    )
+
+
+@router.get("/entries/{entry_id}", response_model=LookbookFlattenedEntrySnapshot)
+def read_flattened_lookbook_entry_detail(
+    entry_id: UUID,
+    current_user: CurrentUser,
+    lookbook_service: Annotated[LookbookService, Depends(get_lookbook_service)],
+) -> LookbookFlattenedEntrySnapshot:
+    try:
+        snapshot = lookbook_service.get_entry_snapshot_for_user(
+            entry_id=entry_id,
+            user_id=current_user.id,
+        )
+    except LookbookError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    return build_flattened_lookbook_entry_snapshot(snapshot)
 
 
 @router.get("/{lookbook_id}", response_model=LookbookDetailSnapshot)
@@ -297,6 +343,18 @@ def build_lookbook_entry_snapshot(snapshot: LookbookEntryView) -> LookbookEntryS
         outfit=build_outfit_reference_snapshot(snapshot.outfit),
         created_at=snapshot.created_at,
         updated_at=snapshot.updated_at,
+    )
+
+
+def build_flattened_lookbook_entry_snapshot(
+    snapshot: LookbookFlattenedEntryView,
+) -> LookbookFlattenedEntrySnapshot:
+    return LookbookFlattenedEntrySnapshot(
+        lookbook_id=snapshot.lookbook_id,
+        lookbook_title=snapshot.lookbook_title,
+        lookbook_description=snapshot.lookbook_description,
+        lookbook_cover_image=build_private_image_snapshot(snapshot.lookbook_cover_image),
+        entry=build_lookbook_entry_snapshot(snapshot.entry),
     )
 
 
