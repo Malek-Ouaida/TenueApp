@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { apiRequest, ApiError } from "../api";
-import { clearAuthCookies, readAuthCookies, writeAuthCookies } from "./cookies";
+import { clearAuthCookies, readAuthCookies } from "./cookies";
 
 export type AuthUser = {
   id: string;
@@ -35,63 +35,80 @@ type MeResponse = {
   user: AuthUser;
 };
 
-export async function resolveSession(): Promise<AuthSessionResponse | null> {
+export type SessionResolution =
+  | {
+      status: "authenticated";
+      value: AuthSessionResponse;
+    }
+  | {
+      status: "missing";
+    }
+  | {
+      status: "refresh-required";
+    }
+  | {
+      status: "unavailable";
+    };
+
+const sessionRecoveryPath = "/auth/session/recover?redirect=%2Fdashboard&fallback=%2Fsignin";
+
+export function getSessionRecoveryPath() {
+  return sessionRecoveryPath;
+}
+
+export async function resolveSession(): Promise<SessionResolution> {
   const { accessToken, refreshToken } = await readAuthCookies();
   if (!accessToken || !refreshToken) {
-    return null;
+    return {
+      status: "missing"
+    };
   }
 
   try {
     const me = await apiRequest<MeResponse>("/auth/me", {
       headers: {
         Authorization: `Bearer ${accessToken}`
-      }
+      },
+      ttlSeconds: 10
     });
 
     return {
-      user: me.user,
-      session: {
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        token_type: "bearer",
-        expires_in: 0,
-        expires_at: null
+      status: "authenticated",
+      value: {
+        user: me.user,
+        session: {
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          token_type: "bearer",
+          expires_in: 0,
+          expires_at: null
+        }
       }
     };
   } catch (error) {
-    if (!(error instanceof ApiError) || error.status !== 401) {
-      await clearAuthCookies();
-      return null;
+    if (error instanceof ApiError && error.status === 401) {
+      return {
+        status: "refresh-required"
+      };
     }
-  }
 
-  try {
-    const refreshed = await apiRequest<AuthSessionResponse>("/auth/refresh", {
-      method: "POST",
-      json: {
-        refresh_token: refreshToken
-      }
-    });
-
-    await writeAuthCookies({
-      accessToken: refreshed.session.access_token,
-      refreshToken: refreshed.session.refresh_token
-    });
-
-    return refreshed;
-  } catch {
-    await clearAuthCookies();
-    return null;
+    return {
+      status: "unavailable"
+    };
   }
 }
 
 export async function requireSession(): Promise<AuthSessionResponse> {
-  const session = await resolveSession();
-  if (!session) {
-    redirect("/login");
+  const resolution = await resolveSession();
+  if (resolution.status === "authenticated") {
+    return resolution.value;
   }
 
-  return session;
+  if (resolution.status === "refresh-required") {
+    redirect(sessionRecoveryPath);
+  }
+
+  redirect("/signin");
 }
 
 export async function logoutCurrentSession(): Promise<void> {

@@ -12,6 +12,7 @@
     "format": "node -e \"console.log('apps/web: no formatter changes in Phase 03 auth foundation')\""
   },
   "dependencies": {
+    "lucide-react": "^0.462.0",
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -23,7 +24,10 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.21",
     "eslint": "^9.0.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
     "typescript": "^5.0.0"
   }
 }
