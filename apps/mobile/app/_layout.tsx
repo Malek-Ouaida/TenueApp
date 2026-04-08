@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Stack, useRouter, useSegments, type Href } from "expo-router";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 
+import { OutfitsProvider } from "../src/outfits/provider";
 import { AuthProvider, useAuth } from "../src/auth/provider";
 import { colors, useAppFonts } from "../src/theme";
 import { AppText, BrandMark } from "../src/ui";
@@ -18,14 +19,14 @@ function RootNavigator() {
     }
 
     const firstSegment = segments[0];
-    const isAuthRoute = firstSegment === "(auth)";
+    const isAuthRoute = firstSegment === "(auth)" || firstSegment === "profile-setup";
 
     if (status === "anonymous" && !isAuthRoute) {
       router.replace("/splash" as Href);
     }
 
     if (status === "authenticated" && isAuthRoute) {
-      router.replace("/");
+      router.replace("/" as Href);
     }
   }, [fontsLoaded, router, segments, status]);
 
@@ -63,7 +64,9 @@ function RootNavigator() {
 export default function RootLayout() {
   return (
     <AuthProvider>
-      <RootNavigator />
+      <OutfitsProvider>
+        <RootNavigator />
+      </OutfitsProvider>
     </AuthProvider>
   );
 }
