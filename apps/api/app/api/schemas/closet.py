@@ -217,6 +217,7 @@ class ClosetBrowseListItemSnapshot(BaseModel):
     material: str | None
     pattern: str | None
     brand: str | None
+    season_tags: list[str] | None
     display_image: ClosetProcessingImageSnapshot | None
     thumbnail_image: ClosetProcessingImageSnapshot | None
 

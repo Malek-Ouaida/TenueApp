@@ -708,6 +708,7 @@ def build_browse_list_item_snapshot(
         material=getattr(snapshot, "material"),
         pattern=getattr(snapshot, "pattern"),
         brand=getattr(snapshot, "brand"),
+        season_tags=getattr(snapshot, "season_tags"),
         display_image=_build_image_payload(getattr(snapshot, "display_image")),
         thumbnail_image=_build_image_payload(getattr(snapshot, "thumbnail_image")),
     )
