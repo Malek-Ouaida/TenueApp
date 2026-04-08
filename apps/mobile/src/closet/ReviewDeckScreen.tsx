@@ -671,6 +671,7 @@ export function ReviewDeckScreen({
 
               <ScrollView
                 contentContainerStyle={styles.fieldsScrollContent}
+                nestedScrollEnabled
                 showsVerticalScrollIndicator={false}
                 style={styles.fieldsScroll}
               >
@@ -698,7 +699,9 @@ export function ReviewDeckScreen({
               <View style={styles.backContent}>
                 <ScrollView
                   contentContainerStyle={styles.backScrollContent}
+                  nestedScrollEnabled
                   showsVerticalScrollIndicator={false}
+                  style={styles.backScroll}
                 >
                   <View style={styles.editHeader}>
                     {previewImage ? (
@@ -946,6 +949,7 @@ const styles = StyleSheet.create({
   },
   cardStackWrap: {
     flex: 1,
+    minHeight: 0,
     alignItems: "center"
   },
   nextCard: {
@@ -1079,9 +1083,13 @@ const styles = StyleSheet.create({
   },
   backContent: {
     flex: 1,
+    minHeight: 0,
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 20
+  },
+  backScroll: {
+    flex: 1
   },
   backScrollContent: {
     paddingBottom: 120

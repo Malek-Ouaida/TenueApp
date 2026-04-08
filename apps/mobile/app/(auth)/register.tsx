@@ -6,20 +6,20 @@ import { Animated, Pressable, StyleSheet, View } from "react-native";
 import { useAuth } from "../../src/auth/provider";
 import {
   AuthFooterLink,
-  EditorialBackButton,
-  EditorialPrimaryButton,
-  EditorialScreen,
-  EditorialTextField,
+  AuthBackButton,
+  AuthPrimaryButton,
+  AuthScreen,
+  AuthTextField,
   buildFadeUpStyle,
-  editorialPalette,
-  useEditorialIntro
-} from "../../src/auth/editorial";
+  authPalette,
+  useAuthIntroAnimation
+} from "../../src/auth/ui";
 import { colors, fontFamilies } from "../../src/theme";
 import { AppText } from "../../src/ui";
 
 export default function RegisterScreen() {
   const { registerWithPassword } = useAuth();
-  const intro = useEditorialIntro(7);
+  const intro = useAuthIntroAnimation(7);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -51,22 +51,22 @@ export default function RegisterScreen() {
   }
 
   return (
-    <EditorialScreen scrollable={false}>
+    <AuthScreen scrollable={false}>
       <View style={styles.page}>
         <Animated.View style={buildFadeUpStyle(intro[0], -8)}>
-          <EditorialBackButton onPress={() => router.replace("/welcome" as Href)} />
+          <AuthBackButton onPress={() => router.back()} />
         </Animated.View>
 
         <Animated.View style={[styles.titleBlock, buildFadeUpStyle(intro[1])]}>
           <AppText style={styles.title}>Create your{"\n"}account</AppText>
-          <AppText color={editorialPalette.muted} style={styles.subtitle}>
+          <AppText color={authPalette.muted} style={styles.subtitle}>
             Start building your wardrobe.
           </AppText>
         </Animated.View>
 
         <View style={styles.formBlock}>
           <Animated.View style={buildFadeUpStyle(intro[2])}>
-            <EditorialTextField
+            <AuthTextField
               autoCapitalize="none"
               autoComplete="email"
               keyboardType="email-address"
@@ -78,7 +78,7 @@ export default function RegisterScreen() {
           </Animated.View>
 
           <Animated.View style={buildFadeUpStyle(intro[3])}>
-            <EditorialTextField
+            <AuthTextField
               autoCapitalize="none"
               autoComplete="new-password"
               label="Password"
@@ -89,7 +89,7 @@ export default function RegisterScreen() {
                   style={({ pressed }) => [pressed ? styles.pressedIcon : null]}
                 >
                   <Feather
-                    color={editorialPalette.subtle}
+                    color={authPalette.subtle}
                     name={showPassword ? "eye-off" : "eye"}
                     size={18}
                   />
@@ -126,7 +126,7 @@ export default function RegisterScreen() {
         </View>
 
         <Animated.View style={[styles.termsBlock, buildFadeUpStyle(intro[4], 8)]}>
-          <AppText color={editorialPalette.subtle} style={styles.termsText}>
+          <AppText color={authPalette.subtle} style={styles.termsText}>
             By continuing, you agree to our Terms of Service and Privacy Policy.
           </AppText>
         </Animated.View>
@@ -142,7 +142,7 @@ export default function RegisterScreen() {
               {notice}
             </AppText>
           ) : null}
-          <EditorialPrimaryButton
+          <AuthPrimaryButton
             disabled={!isValid}
             label="Start your wardrobe"
             loading={isSubmitting}
@@ -155,7 +155,7 @@ export default function RegisterScreen() {
           />
         </Animated.View>
       </View>
-    </EditorialScreen>
+    </AuthScreen>
   );
 }
 
@@ -196,10 +196,10 @@ const styles = StyleSheet.create({
     borderRadius: 999
   },
   passwordStrengthIdle: {
-    backgroundColor: editorialPalette.border
+    backgroundColor: authPalette.border
   },
   passwordStrengthWeak: {
-    backgroundColor: editorialPalette.accent
+    backgroundColor: authPalette.accent
   },
   passwordStrengthMedium: {
     backgroundColor: "#F59E0B"

@@ -15,10 +15,12 @@ export default function TabLayout() {
       }}
     >
       <Tabs.Screen name="index" />
+      <Tabs.Screen name="home" options={{ href: null }} />
       <Tabs.Screen name="closet/index" options={{ title: "Closet" }} />
-      <Tabs.Screen name="add" />
-      <Tabs.Screen name="style" />
+      <Tabs.Screen name="lookbook/index" options={{ title: "Lookbook" }} />
       <Tabs.Screen name="profile" />
+      <Tabs.Screen name="add" options={{ href: null }} />
+      <Tabs.Screen name="style" options={{ href: null }} />
     </Tabs>
   );
 }

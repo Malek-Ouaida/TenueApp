@@ -96,7 +96,7 @@ export default function StyleScreen() {
         />
       </View>
 
-      <Pressable onPress={() => router.push("/insights" as Href)}>
+      <Pressable onPress={() => router.push("/stats" as Href)}>
         <Card tone="soft">
           <AppText color={colors.textSubtle} variant="eyebrow">
             Insights

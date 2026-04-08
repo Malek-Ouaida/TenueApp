@@ -13,12 +13,6 @@ export default function AppStackLayout() {
       }}
     >
       <Stack.Screen name="(tabs)" />
-      <Stack.Screen
-        name="insights"
-        options={{
-          presentation: "modal"
-        }}
-      />
     </Stack>
   );
 }

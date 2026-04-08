@@ -6,20 +6,20 @@ import { Animated, Pressable, StyleSheet, View } from "react-native";
 import { useAuth } from "../../src/auth/provider";
 import {
   AuthFooterLink,
-  EditorialBackButton,
-  EditorialPrimaryButton,
-  EditorialScreen,
-  EditorialTextField,
+  AuthBackButton,
+  AuthPrimaryButton,
+  AuthScreen,
+  AuthTextField,
   buildFadeUpStyle,
-  editorialPalette,
-  useEditorialIntro
-} from "../../src/auth/editorial";
+  authPalette,
+  useAuthIntroAnimation
+} from "../../src/auth/ui";
 import { colors, fontFamilies } from "../../src/theme";
 import { AppText } from "../../src/ui";
 
 export default function LoginScreen() {
   const { loginWithPassword } = useAuth();
-  const intro = useEditorialIntro(6);
+  const intro = useAuthIntroAnimation(6);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -39,26 +39,26 @@ export default function LoginScreen() {
       return;
     }
 
-    router.replace("/");
+    router.replace("/" as Href);
   }
 
   return (
-    <EditorialScreen scrollable={false}>
+    <AuthScreen scrollable={false}>
       <View style={styles.page}>
         <Animated.View style={buildFadeUpStyle(intro[0], -8)}>
-          <EditorialBackButton onPress={() => router.replace("/welcome" as Href)} />
+          <AuthBackButton onPress={() => router.back()} />
         </Animated.View>
 
         <Animated.View style={[styles.titleBlock, buildFadeUpStyle(intro[1])]}>
           <AppText style={styles.title}>Welcome back</AppText>
-          <AppText color={editorialPalette.muted} style={styles.subtitle}>
+          <AppText color={authPalette.muted} style={styles.subtitle}>
             Pick up where you left off.
           </AppText>
         </Animated.View>
 
         <View style={styles.formBlock}>
           <Animated.View style={buildFadeUpStyle(intro[2])}>
-            <EditorialTextField
+            <AuthTextField
               autoCapitalize="none"
               autoComplete="email"
               keyboardType="email-address"
@@ -70,7 +70,7 @@ export default function LoginScreen() {
           </Animated.View>
 
           <Animated.View style={buildFadeUpStyle(intro[3])}>
-            <EditorialTextField
+            <AuthTextField
               autoCapitalize="none"
               autoComplete="password"
               label="Password"
@@ -81,7 +81,7 @@ export default function LoginScreen() {
                   style={({ pressed }) => [pressed ? styles.pressedIcon : null]}
                 >
                   <Feather
-                    color={editorialPalette.subtle}
+                    color={authPalette.subtle}
                     name={showPassword ? "eye-off" : "eye"}
                     size={18}
                   />
@@ -99,7 +99,7 @@ export default function LoginScreen() {
             onPress={() => router.push("/forgot-password" as Href)}
             style={styles.forgotLinkPressable}
           >
-            <AppText color={editorialPalette.subtle} style={styles.forgotLink}>
+            <AppText color={authPalette.subtle} style={styles.forgotLink}>
               Forgot password?
             </AppText>
           </Pressable>
@@ -111,7 +111,7 @@ export default function LoginScreen() {
               {error}
             </AppText>
           ) : null}
-          <EditorialPrimaryButton
+          <AuthPrimaryButton
             disabled={!isValid}
             label="Sign In"
             loading={isSubmitting}
@@ -124,7 +124,7 @@ export default function LoginScreen() {
           />
         </Animated.View>
       </View>
-    </EditorialScreen>
+    </AuthScreen>
   );
 }
 
