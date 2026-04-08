@@ -174,6 +174,14 @@ class LookbookEntrySnapshot(BaseModel):
     updated_at: datetime
 
 
+class LookbookFlattenedEntrySnapshot(BaseModel):
+    lookbook_id: UUID
+    lookbook_title: str
+    lookbook_description: str | None
+    lookbook_cover_image: PrivateImageSnapshot | None
+    entry: LookbookEntrySnapshot
+
+
 class LookbookSummarySnapshot(BaseModel):
     id: UUID
     title: str
@@ -201,6 +209,11 @@ class LookbookListResponse(BaseModel):
 
 class LookbookEntryListResponse(BaseModel):
     items: list[LookbookEntrySnapshot]
+    next_cursor: str | None
+
+
+class LookbookFlattenedEntryListResponse(BaseModel):
+    items: list[LookbookFlattenedEntrySnapshot]
     next_cursor: str | None
 
 

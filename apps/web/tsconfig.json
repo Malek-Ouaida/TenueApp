@@ -2,6 +2,9 @@
   "extends": "@tenue/config-typescript/next.json",
   "compilerOptions": {
     "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
     "plugins": [
       {
         "name": "next"

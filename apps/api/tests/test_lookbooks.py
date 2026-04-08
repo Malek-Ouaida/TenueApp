@@ -260,6 +260,113 @@ def test_create_image_entry_from_upload_intent_and_prefer_image_cover(
     assert detail_response.json()["cover_image"]["asset_id"] == body["image"]["asset_id"]
 
 
+def test_flattened_lookbook_entry_routes_list_and_fetch_entries_directly(
+    client: TestClient,
+) -> None:
+    headers = register_and_get_headers(client, email="lookbooks-flat-list@example.com")
+    first_lookbook = create_lookbook(client, headers, title="Weekend")
+    second_lookbook = create_lookbook(client, headers, title="Work")
+    assert first_lookbook.status_code == 201
+    assert second_lookbook.status_code == 201
+
+    first_entry = create_lookbook_entry(
+        client,
+        headers,
+        lookbook_id=first_lookbook.json()["id"],
+        payload={"entry_type": "note", "note_text": "Weekend notes"},
+    )
+    second_entry = create_lookbook_entry(
+        client,
+        headers,
+        lookbook_id=second_lookbook.json()["id"],
+        payload={"entry_type": "note", "note_text": "Work notes"},
+    )
+    assert first_entry.status_code == 201
+    assert second_entry.status_code == 201
+
+    list_response = client.get("/lookbooks/entries", headers=headers)
+    assert list_response.status_code == 200
+    body = list_response.json()
+    assert [item["entry"]["id"] for item in body["items"]][:2] == [
+        second_entry.json()["id"],
+        first_entry.json()["id"],
+    ]
+    assert body["items"][0]["lookbook_title"] == "Work"
+    assert body["items"][0]["entry"]["note_text"] == "Work notes"
+
+    detail_response = client.get(
+        f"/lookbooks/entries/{first_entry.json()['id']}",
+        headers=headers,
+    )
+    assert detail_response.status_code == 200
+    assert detail_response.json()["lookbook_id"] == first_lookbook.json()["id"]
+    assert detail_response.json()["lookbook_title"] == "Weekend"
+    assert detail_response.json()["entry"]["id"] == first_entry.json()["id"]
+
+
+def test_lookbook_reads_degrade_when_presigned_download_generation_fails(
+    client: TestClient,
+    fake_storage_client: Any,
+    monkeypatch: Any,
+) -> None:
+    headers = register_and_get_headers(client, email="lookbooks-presign-failure@example.com")
+    lookbook_response = create_lookbook(client, headers, title="Broken images")
+    assert lookbook_response.status_code == 201
+    lookbook_id = lookbook_response.json()["id"]
+
+    image_bytes = build_image_bytes(size=(64, 64))
+    upload_intent_response = create_lookbook_upload_intent(
+        client,
+        headers,
+        lookbook_id=lookbook_id,
+        file_size=len(image_bytes),
+        sha256=sha256_hex(image_bytes),
+    )
+    assert upload_intent_response.status_code == 200
+    upload_to_fake_storage(
+        fake_storage_client,
+        upload_response=upload_intent_response.json(),
+        content=image_bytes,
+    )
+
+    image_entry_response = create_lookbook_entry(
+        client,
+        headers,
+        lookbook_id=lookbook_id,
+        payload={
+            "entry_type": "image",
+            "upload_intent_id": upload_intent_response.json()["upload_intent_id"],
+            "caption": "Fallback image",
+        },
+    )
+    assert image_entry_response.status_code == 201
+    entry_id = image_entry_response.json()["id"]
+
+    def fail_presigned_download(*, bucket: str, key: str, expires_in_seconds: int):
+        raise RuntimeError(f"unable to presign {bucket}/{key}")
+
+    monkeypatch.setattr(
+        fake_storage_client,
+        "generate_presigned_download",
+        fail_presigned_download,
+    )
+
+    list_response = client.get("/lookbooks", headers=headers)
+    assert list_response.status_code == 200
+    assert list_response.json()["items"][0]["id"] == lookbook_id
+    assert list_response.json()["items"][0]["cover_image"] is None
+
+    detail_response = client.get(f"/lookbooks/{lookbook_id}", headers=headers)
+    assert detail_response.status_code == 200
+    assert detail_response.json()["cover_image"] is None
+
+    entries_response = client.get(f"/lookbooks/{lookbook_id}/entries", headers=headers)
+    assert entries_response.status_code == 200
+    entries = entries_response.json()["items"]
+    assert entries[0]["id"] == entry_id
+    assert entries[0]["image"] is None
+
+
 def test_upload_intent_expiry_and_wrong_lookbook_are_rejected(
     client: TestClient,
     db_session: Session,

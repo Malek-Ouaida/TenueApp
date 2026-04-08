@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -101,7 +101,8 @@ export function EditorialScreen({
           <ScrollView
             bounces={false}
             contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+            keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
             style={styles.flex}
           >
@@ -154,49 +155,20 @@ export function EditorialTextField({
   helper,
   label,
   leftIcon,
-  onBlur,
-  onFocus,
   rightAccessory,
   style,
   ...props
 }: EditorialTextFieldProps) {
-  const [focused, setFocused] = useState(false);
-  const labelColor = error
-    ? colors.danger
-    : focused
-      ? editorialPalette.accent
-      : editorialPalette.muted;
-  const borderColor = error
-    ? colors.danger
-    : focused
-      ? editorialPalette.accent
-      : editorialPalette.border;
-
-  function handleFocus(event: Parameters<NonNullable<TextInputProps["onFocus"]>>[0]) {
-    setFocused(true);
-    onFocus?.(event);
-  }
-
-  function handleBlur(event: Parameters<NonNullable<TextInputProps["onBlur"]>>[0]) {
-    setFocused(false);
-    onBlur?.(event);
-  }
+  const labelColor = error ? colors.danger : editorialPalette.muted;
+  const borderColor = error ? colors.danger : editorialPalette.border;
 
   return (
     <View style={[styles.fieldRoot, containerStyle]}>
       <AppText style={[styles.fieldLabel, { color: labelColor }]}>{label}</AppText>
-      <View
-        style={[
-          styles.inputShell,
-          { borderColor },
-          focused ? styles.inputShellFocused : null
-        ]}
-      >
+      <View style={[styles.inputShell, { borderColor }]}>
         {leftIcon ? <View style={styles.leadingAccessory}>{leftIcon}</View> : null}
         <TextInput
           {...props}
-          onBlur={handleBlur}
-          onFocus={handleFocus}
           placeholderTextColor={editorialPalette.subtle}
           style={[
             styles.input,
@@ -419,13 +391,6 @@ const styles = StyleSheet.create({
     backgroundColor: editorialPalette.surface,
     flexDirection: "row",
     alignItems: "center"
-  },
-  inputShellFocused: {
-    shadowColor: editorialPalette.accent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 2
   },
   leadingAccessory: {
     paddingLeft: 16

@@ -23,7 +23,7 @@ export default function ForgotPasswordScreen() {
   const isValid = email.includes("@");
 
   return (
-    <EditorialScreen scrollable={false}>
+    <EditorialScreen>
       <View style={styles.page}>
       <Animated.View style={buildFadeUpStyle(intro[0], -8)}>
         <EditorialBackButton onPress={() => router.replace("/login")} variant="surface" />
@@ -38,9 +38,10 @@ export default function ForgotPasswordScreen() {
             </AppText>
           </Animated.View>
 
-          <Animated.View style={[styles.formBlock, buildFadeUpStyle(intro[2])]}>
+          <View style={styles.formBlock}>
             <EditorialTextField
               autoCapitalize="none"
+              autoCorrect={false}
               autoComplete="email"
               keyboardType="email-address"
               label="Email"
@@ -49,7 +50,7 @@ export default function ForgotPasswordScreen() {
               value={email}
               onChangeText={setEmail}
             />
-          </Animated.View>
+          </View>
 
           <Animated.View style={[styles.ctaBlock, buildFadeUpStyle(intro[3], 20)]}>
             <EditorialPrimaryButton

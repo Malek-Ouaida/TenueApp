@@ -409,6 +409,7 @@ def test_confirmed_browse_excludes_unconfirmed_and_archived_items(
     assert response.status_code == 200
     body = response.json()
     assert [item["item_id"] for item in body["items"]] == [str(second_confirmed_item_id)]
+    assert body["items"][0]["season_tags"] is None
     assert str(hidden_review_item_id) not in {item["item_id"] for item in body["items"]}
     assert str(archived_copy.id) not in {item["item_id"] for item in body["items"]}
 

@@ -43,6 +43,7 @@ class BrowseListItemSnapshot:
     material: str | None
     pattern: str | None
     brand: str | None
+    season_tags: list[str] | None
     display_image: ProcessingSnapshotImage | None
     thumbnail_image: ProcessingSnapshotImage | None
 
@@ -323,6 +324,7 @@ class ClosetBrowseService:
             material=projection.material,
             pattern=projection.pattern,
             brand=projection.brand,
+            season_tags=projection.season_tags,
             display_image=processed_image or original_image,
             thumbnail_image=thumbnail_image,
         )

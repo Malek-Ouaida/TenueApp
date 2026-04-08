@@ -151,7 +151,6 @@ export default function ProfileSetupScreen() {
           />
         </View>
       }
-      scrollable={false}
     >
       <View style={styles.page}>
         <Animated.View style={[styles.titleRow, buildFadeUpStyle(intro[0])]}>
@@ -219,7 +218,7 @@ export default function ProfileSetupScreen() {
         </Animated.View>
 
         <View style={styles.formBlock}>
-          <Animated.View style={buildFadeUpStyle(intro[2])}>
+          <View>
             <EditorialTextField
               autoCapitalize="none"
               autoCorrect={false}
@@ -228,16 +227,17 @@ export default function ProfileSetupScreen() {
               value={username}
               onChangeText={setUsername}
             />
-          </Animated.View>
+          </View>
 
-          <Animated.View style={buildFadeUpStyle(intro[3])}>
+          <View>
             <EditorialTextField
+              autoCorrect={false}
               label="Display name"
               placeholder="Your name"
               value={displayName}
               onChangeText={setDisplayName}
             />
-          </Animated.View>
+          </View>
 
           <Animated.View style={buildFadeUpStyle(intro[4], 10)}>
             <AppText color={editorialPalette.subtle} style={styles.microcopy}>

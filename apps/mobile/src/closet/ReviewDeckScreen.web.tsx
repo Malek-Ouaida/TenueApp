@@ -1,8 +1,12 @@
-import * as Haptics from "expo-haptics";
 import { router, type Href } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { humanizeEnum } from "../lib/format";
+import {
+  triggerErrorHaptic,
+  triggerSelectionHaptic,
+  triggerSuccessHaptic
+} from "../lib/haptics";
 import { useAuth } from "../auth/provider";
 import { fontFamilies } from "../theme/typography";
 import { prefetchClosetReviewItem, useClosetMetadataOptions, useClosetReviewItem } from "./hooks";
@@ -227,7 +231,7 @@ export function ReviewDeckScreen({
       const result = await reviewFlow.applyChanges([change]);
 
       if (result.ok) {
-        await Haptics.selectionAsync();
+        await triggerSelectionHaptic();
         return true;
       }
 
@@ -307,7 +311,7 @@ export function ReviewDeckScreen({
   const confirmReviewOnServer = useCallback(async () => {
     const result = await reviewFlow.confirm();
     if (result.ok) {
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await triggerSuccessHaptic();
       return true;
     }
 
@@ -316,7 +320,7 @@ export function ReviewDeckScreen({
       return false;
     }
 
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    await triggerErrorHaptic();
     setNotice(reviewFlow.error ?? "Confirmation failed.");
     return false;
   }, [reviewFlow]);

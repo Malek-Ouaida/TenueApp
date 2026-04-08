@@ -51,7 +51,7 @@ export default function RegisterScreen() {
   }
 
   return (
-    <EditorialScreen scrollable={false}>
+    <EditorialScreen>
       <View style={styles.page}>
         <Animated.View style={buildFadeUpStyle(intro[0], -8)}>
           <EditorialBackButton onPress={() => router.replace("/welcome" as Href)} />
@@ -65,9 +65,10 @@ export default function RegisterScreen() {
         </Animated.View>
 
         <View style={styles.formBlock}>
-          <Animated.View style={buildFadeUpStyle(intro[2])}>
+          <View>
             <EditorialTextField
               autoCapitalize="none"
+              autoCorrect={false}
               autoComplete="email"
               keyboardType="email-address"
               label="Email"
@@ -75,11 +76,12 @@ export default function RegisterScreen() {
               value={email}
               onChangeText={setEmail}
             />
-          </Animated.View>
+          </View>
 
-          <Animated.View style={buildFadeUpStyle(intro[3])}>
+          <View>
             <EditorialTextField
               autoCapitalize="none"
+              autoCorrect={false}
               autoComplete="new-password"
               label="Password"
               placeholder="At least 6 characters"
@@ -122,7 +124,7 @@ export default function RegisterScreen() {
                 })}
               </View>
             ) : null}
-          </Animated.View>
+          </View>
         </View>
 
         <Animated.View style={[styles.termsBlock, buildFadeUpStyle(intro[4], 8)]}>
