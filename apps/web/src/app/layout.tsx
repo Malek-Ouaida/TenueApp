@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Tenue Auth",
-  description: "Phase 03 auth foundation for the Tenue web app."
+  title: "Tenue",
+  description: "Tenue web companion."
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

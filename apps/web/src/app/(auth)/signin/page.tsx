@@ -5,12 +5,12 @@ import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState } from "react";
 import { ArrowLeft, Eye, EyeOff } from "lucide-react";
 
-import { registerAction } from "../../actions/auth";
+import { loginAction } from "../../actions/auth";
 import { initialAuthFormState } from "../form-state";
 
-export default function RegisterPage() {
-  const [state, formAction, isPending] = useActionState(registerAction, initialAuthFormState);
+export default function SignInPage() {
   const router = useRouter();
+  const [state, formAction, isPending] = useActionState(loginAction, initialAuthFormState);
   const [ready, setReady] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -23,14 +23,12 @@ export default function RegisterPage() {
     return () => clearTimeout(timer);
   }, []);
 
-  const isValid = email.length > 0 && password.length >= 6;
-  const strengthLevel =
-    password.length === 0 ? 0 : password.length < 4 ? 1 : password.length < 7 ? 2 : password.length < 10 ? 3 : 4;
+  const isValid = email.length > 0 && password.length > 0;
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4">
-      <div className="hero-orb left-[8%] top-24 h-40 w-40 bg-sage/40" />
-      <div className="hero-orb hero-orb-secondary bottom-20 right-[10%] h-48 w-48 bg-coral/40" />
+      <div className="hero-orb left-[10%] top-20 h-36 w-36 bg-coral/45" />
+      <div className="hero-orb hero-orb-secondary bottom-24 right-[12%] h-44 w-44 bg-lavender/35" />
       <div className="flex w-full max-w-md flex-col">
         <div
           className="transition-all duration-500 ease-out"
@@ -58,12 +56,10 @@ export default function RegisterPage() {
           }}
         >
           <h1 className="font-display text-[32px] font-medium tracking-[-0.02em] text-foreground">
-            Create your
-            <br />
-            account
+            Welcome back
           </h1>
           <p className="mt-2 font-body text-[15px] text-muted-foreground">
-            Start building your wardrobe.
+            Pick up where you left off.
           </p>
         </div>
 
@@ -125,7 +121,7 @@ export default function RegisterPage() {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="At least 6 characters"
+                placeholder="........"
                 required
                 className="h-[52px] w-full rounded-2xl bg-card px-5 pr-12 font-body text-[15px] text-foreground outline-none transition-all duration-300"
                 style={{
@@ -147,36 +143,18 @@ export default function RegisterPage() {
                 )}
               </button>
             </div>
-
-            {password.length > 0 ? (
-              <div className="mt-3 flex gap-1.5">
-                {[1, 2, 3, 4].map((index) => (
-                  <div
-                    key={index}
-                    className="h-[3px] flex-1 rounded-full transition-all duration-500"
-                    style={{
-                      background:
-                        strengthLevel >= index
-                          ? index <= 1
-                            ? "hsl(0, 76%, 70%)"
-                            : index <= 2
-                              ? "hsl(46, 100%, 79%)"
-                              : "hsl(140, 42%, 89%)"
-                          : "hsl(var(--border))"
-                    }}
-                  />
-                ))}
-              </div>
-            ) : null}
           </div>
 
           <div
             className="transition-all duration-700 ease-out"
             style={{ opacity: ready ? 1 : 0, transitionDelay: "400ms" }}
           >
-            <p className="font-body text-[12px] leading-[1.5] text-muted-foreground">
-              By continuing, you agree to our Terms of Service and Privacy Policy.
-            </p>
+            <button
+              type="button"
+              className="font-body text-[13px] text-muted-foreground transition-opacity active:opacity-60"
+            >
+              Forgot password?
+            </button>
           </div>
 
           {state.error ? (
@@ -211,7 +189,7 @@ export default function RegisterPage() {
                   isValid && !isPending ? "0 12px 40px hsla(0, 76%, 70%, 0.3)" : "none"
               }}
             >
-              {isPending ? "Creating Account..." : "Start your wardrobe"}
+              {isPending ? "Signing In..." : "Sign In"}
             </button>
           </div>
         </form>
@@ -220,9 +198,9 @@ export default function RegisterPage() {
           className="mt-6 text-center font-body text-sm text-muted-foreground transition-all duration-700 ease-out"
           style={{ opacity: ready ? 1 : 0, transitionDelay: "600ms" }}
         >
-          Already have an account?{" "}
-          <Link href="/signin" className="font-semibold text-foreground hover:underline">
-            Sign in
+          Don&apos;t have an account?{" "}
+          <Link href="/register" className="font-semibold text-foreground hover:underline">
+            Sign up
           </Link>
         </p>
       </div>

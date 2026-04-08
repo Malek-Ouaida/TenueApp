@@ -28,7 +28,7 @@ export async function registerAction(
 export async function logoutAction() {
   await logoutCurrentSession();
   await clearAuthCookies();
-  redirect("/login");
+  redirect("/signin");
 }
 
 async function submitLoginCredentials(formData: FormData): Promise<AuthFormState> {
@@ -55,7 +55,7 @@ async function submitLoginCredentials(formData: FormData): Promise<AuthFormState
     };
   }
 
-  redirect("/profile");
+  redirect("/dashboard");
 }
 
 async function submitRegistration(formData: FormData): Promise<AuthFormState> {
@@ -76,7 +76,7 @@ async function submitRegistration(formData: FormData): Promise<AuthFormState> {
         accessToken: response.session.access_token,
         refreshToken: response.session.refresh_token
       });
-      redirect("/profile");
+      redirect("/dashboard");
     }
 
     return {
