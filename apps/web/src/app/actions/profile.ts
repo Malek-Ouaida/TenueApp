@@ -30,7 +30,7 @@ export async function updateProfileAction(
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       await clearAuthCookies();
-      redirect("/login");
+      redirect("/signin");
     }
 
     return {
