@@ -13,6 +13,11 @@ LOOKBOOK_UPLOAD_MAX_FILE_SIZE = 15 * 1024 * 1024
 LOOKBOOK_UPLOAD_MAX_WIDTH = 8000
 LOOKBOOK_UPLOAD_MAX_HEIGHT = 8000
 LOOKBOOK_UPLOAD_INTENT_TTL_SECONDS = 15 * 60
+WEAR_UPLOAD_ALLOWED_MIME_TYPES = ("image/jpeg", "image/png", "image/webp")
+WEAR_UPLOAD_MAX_FILE_SIZE = 15 * 1024 * 1024
+WEAR_UPLOAD_MAX_WIDTH = 8000
+WEAR_UPLOAD_MAX_HEIGHT = 8000
+WEAR_UPLOAD_INTENT_TTL_SECONDS = 15 * 60
 DEFAULT_PHOTOROOM_BASE_URL = "https://sdk.photoroom.com/v1/segment"
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_DEV_CORS_ALLOW_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
@@ -54,6 +59,7 @@ class Settings:
     gemini_model: str
     gemini_timeout_seconds: float
     closet_metadata_extraction_max_edge: int
+    wear_detection_provider: str
 
 
 def load_supabase_client_key() -> str:
@@ -152,6 +158,8 @@ def load_settings() -> Settings:
         closet_metadata_extraction_max_edge=int(
             os.getenv("CLOSET_METADATA_EXTRACTION_MAX_EDGE", "1600")
         ),
+        wear_detection_provider=os.getenv("WEAR_DETECTION_PROVIDER", "disabled").strip()
+        or "disabled",
     )
 
 

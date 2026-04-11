@@ -53,13 +53,16 @@ from app.domains.closet.repository import (
 from app.domains.closet.service import ClosetLifecycleService
 from app.domains.closet.similarity_service import ClosetSimilarityService
 from app.domains.closet.taxonomy import (
+    ATTRIBUTES,
     CATEGORY_SUBCATEGORIES,
     COLORS,
+    FIT_TAGS,
     MATERIALS,
     OCCASION_TAGS,
     PATTERNS,
     REQUIRED_CONFIRMATION_FIELDS,
     SEASON_TAGS,
+    SILHOUETTES,
     STYLE_TAGS,
     SUPPORTED_FIELD_ORDER,
     TAXONOMY_VERSION,
@@ -69,8 +72,12 @@ RETRY_STEP_IMAGE_PROCESSING = "image_processing"
 RETRY_STEP_METADATA_EXTRACTION = "metadata_extraction"
 RETRY_STEP_NORMALIZATION = "normalization_projection"
 
-SCALAR_CONTROLLED_FIELDS = frozenset({"category", "subcategory", "material", "pattern"})
-LIST_FIELDS = frozenset({"colors", "style_tags", "occasion_tags", "season_tags"})
+SCALAR_CONTROLLED_FIELDS = frozenset(
+    {"category", "subcategory", "material", "pattern", "silhouette"}
+)
+LIST_FIELDS = frozenset(
+    {"colors", "style_tags", "fit_tags", "occasion_tags", "season_tags", "attributes"}
+)
 
 CATEGORY_VALUES = frozenset(CATEGORY_SUBCATEGORIES.keys())
 SUBCATEGORY_VALUES = frozenset(
@@ -81,14 +88,17 @@ SUBCATEGORY_VALUES = frozenset(
 CONTROLLED_LIST_VALUES = {
     "colors": frozenset(COLORS),
     "style_tags": frozenset(STYLE_TAGS),
+    "fit_tags": frozenset(FIT_TAGS),
     "occasion_tags": frozenset(OCCASION_TAGS),
     "season_tags": frozenset(SEASON_TAGS),
+    "attributes": frozenset(ATTRIBUTES),
 }
 CONTROLLED_SCALAR_VALUES = {
     "category": CATEGORY_VALUES,
     "subcategory": SUBCATEGORY_VALUES,
     "material": frozenset(MATERIALS),
     "pattern": frozenset(PATTERNS),
+    "silhouette": frozenset(SILHOUETTES),
 }
 
 

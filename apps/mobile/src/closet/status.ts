@@ -24,8 +24,11 @@ export const CLOSET_FIELD_ORDER = [
   "pattern",
   "brand",
   "style_tags",
+  "fit_tags",
   "occasion_tags",
-  "season_tags"
+  "season_tags",
+  "silhouette",
+  "attributes"
 ] as const;
 
 export function resolvePreferredImage(

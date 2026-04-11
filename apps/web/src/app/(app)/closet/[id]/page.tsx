@@ -6,7 +6,6 @@ import { ApiError } from "@/lib/api";
 import { getClosetItemDetail, getSimilarClosetItems } from "@/lib/closet";
 import {
   CATEGORY_LABELS,
-  findFieldValue,
   formatDaysAgo,
   getDaysAgo,
   getPrimaryImageUrl,
@@ -20,6 +19,10 @@ type ItemDetailPageProps = {
     id: string;
   }>;
 };
+
+function formatValueList(values: string[] | null | undefined) {
+  return values?.map((value) => humanizeValue(value) ?? value).join(", ") || "Not set";
+}
 
 export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
   const { id } = await params;
@@ -51,36 +54,47 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
       { label: "Category", value: CATEGORY_LABELS[category] ?? humanizeValue(category) ?? category },
       {
         label: "Type",
-        value:
-          humanizeValue(item.metadata_projection.subcategory) ??
-          findFieldValue(item.field_states, "type") ??
-          "Not set"
+        value: humanizeValue(item.metadata_projection.subcategory) ?? "Not set"
       },
       {
         label: "Color",
         value: humanizeValue(item.metadata_projection.primary_color) ?? "Not set"
       },
       {
+        label: "Additional colors",
+        value: formatValueList(item.metadata_projection.secondary_colors)
+      },
+      {
         label: "Material",
         value: humanizeValue(item.metadata_projection.material) ?? "Not set"
       },
       {
+        label: "Pattern",
+        value: humanizeValue(item.metadata_projection.pattern) ?? "Not set"
+      },
+      {
         label: "Season",
-        value:
-          item.metadata_projection.season_tags
-            ?.map((season) => humanizeValue(season) ?? season)
-            .join(", ") || "Not set"
+        value: formatValueList(item.metadata_projection.season_tags)
       },
       {
         label: "Occasion",
-        value:
-          item.metadata_projection.occasion_tags
-            ?.map((occasion) => humanizeValue(occasion) ?? occasion)
-            .join(", ") || "Not set"
+        value: formatValueList(item.metadata_projection.occasion_tags)
+      },
+      {
+        label: "Style",
+        value: formatValueList(item.metadata_projection.style_tags)
       },
       {
         label: "Fit",
-        value: findFieldValue(item.field_states, "fit") ?? "Not set"
+        value: formatValueList(item.metadata_projection.fit_tags)
+      },
+      {
+        label: "Silhouette",
+        value: humanizeValue(item.metadata_projection.silhouette) ?? "Not set"
+      },
+      {
+        label: "Attributes",
+        value: formatValueList(item.metadata_projection.attributes)
       }
     ];
 
@@ -187,8 +201,8 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
                   humanizeValue(similar.other_item.subcategory) ??
                   "Closet Item";
                 const similarImageUrl = getPrimaryImageUrl(
-                  similar.other_item.thumbnail_image,
-                  similar.other_item.display_image
+                  similar.other_item.display_image,
+                  similar.other_item.thumbnail_image
                 );
 
                 return (

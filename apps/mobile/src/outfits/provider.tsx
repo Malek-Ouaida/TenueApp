@@ -1,14 +1,15 @@
 import type { PropsWithChildren } from "react";
 import { createContext, useContext, useMemo, useState } from "react";
+import type { ImagePickerAsset } from "expo-image-picker";
 
 import type { ClosetItem, OutfitEntry } from "../lib/reference/wardrobe";
 import { createSeededOutfits } from "../lib/reference/wardrobe";
 
 type OutfitsContextValue = {
-  consumeLogOutfitPhotoUri: () => string | null;
-  logOutfitPhotoUri: string | null;
+  consumeLogOutfitPhotoAsset: () => ImagePickerAsset | null;
+  logOutfitPhotoAsset: ImagePickerAsset | null;
   outfits: Record<string, OutfitEntry>;
-  setLogOutfitPhotoUri: (uri: string | null) => void;
+  setLogOutfitPhotoAsset: (asset: ImagePickerAsset | null) => void;
   upsertOutfit: (
     date: string,
     next: {
@@ -24,17 +25,17 @@ type OutfitsContextValue = {
 const OutfitsContext = createContext<OutfitsContextValue | null>(null);
 
 export function OutfitsProvider({ children }: PropsWithChildren) {
-  const [logOutfitPhotoUri, setLogOutfitPhotoUriState] = useState<string | null>(null);
+  const [logOutfitPhotoAsset, setLogOutfitPhotoAssetState] = useState<ImagePickerAsset | null>(null);
   const [outfits, setOutfits] = useState<Record<string, OutfitEntry>>(() => createSeededOutfits());
 
-  function setLogOutfitPhotoUri(uri: string | null) {
-    setLogOutfitPhotoUriState(uri);
+  function setLogOutfitPhotoAsset(asset: ImagePickerAsset | null) {
+    setLogOutfitPhotoAssetState(asset);
   }
 
-  function consumeLogOutfitPhotoUri() {
-    const nextUri = logOutfitPhotoUri;
-    setLogOutfitPhotoUriState(null);
-    return nextUri;
+  function consumeLogOutfitPhotoAsset() {
+    const nextAsset = logOutfitPhotoAsset;
+    setLogOutfitPhotoAssetState(null);
+    return nextAsset;
   }
 
   function upsertOutfit(
@@ -61,13 +62,13 @@ export function OutfitsProvider({ children }: PropsWithChildren) {
 
   const value = useMemo<OutfitsContextValue>(
     () => ({
-      consumeLogOutfitPhotoUri,
-      logOutfitPhotoUri,
+      consumeLogOutfitPhotoAsset,
+      logOutfitPhotoAsset,
       outfits,
-      setLogOutfitPhotoUri,
+      setLogOutfitPhotoAsset,
       upsertOutfit
     }),
-    [logOutfitPhotoUri, outfits]
+    [logOutfitPhotoAsset, outfits]
   );
 
   return <OutfitsContext.Provider value={value}>{children}</OutfitsContext.Provider>;

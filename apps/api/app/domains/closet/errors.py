@@ -31,6 +31,9 @@ INVALID_REVIEW_MUTATION = "invalid_review_mutation"
 REVIEW_NOT_AVAILABLE = "review_not_available"
 RETRY_NOT_AVAILABLE = "retry_not_available"
 REVIEW_SUGGESTION_MISSING = "review_suggestion_missing"
+CONFIRMED_ITEM_IMAGE_NOT_FOUND = "confirmed_item_image_not_found"
+INVALID_CONFIRMED_ITEM_IMAGE_MUTATION = "invalid_confirmed_item_image_mutation"
+LAST_CONFIRMED_ITEM_IMAGE_REQUIRED = "last_confirmed_item_image_required"
 SIMILARITY_EDGE_NOT_FOUND = "similarity_edge_not_found"
 SIMILARITY_RECOMPUTE_ALREADY_SCHEDULED = "similarity_recompute_already_scheduled"
 
@@ -197,6 +200,21 @@ ERROR_DEFINITIONS = {
         code=REVIEW_SUGGESTION_MISSING,
         status_code=409,
         detail="No usable suggestion is available for this field.",
+    ),
+    CONFIRMED_ITEM_IMAGE_NOT_FOUND: ClosetErrorDefinition(
+        code=CONFIRMED_ITEM_IMAGE_NOT_FOUND,
+        status_code=404,
+        detail="Closet item image not found.",
+    ),
+    INVALID_CONFIRMED_ITEM_IMAGE_MUTATION: ClosetErrorDefinition(
+        code=INVALID_CONFIRMED_ITEM_IMAGE_MUTATION,
+        status_code=422,
+        detail="The requested confirmed-item image mutation is invalid.",
+    ),
+    LAST_CONFIRMED_ITEM_IMAGE_REQUIRED: ClosetErrorDefinition(
+        code=LAST_CONFIRMED_ITEM_IMAGE_REQUIRED,
+        status_code=409,
+        detail="Confirmed closet items must keep at least one original image.",
     ),
     SIMILARITY_EDGE_NOT_FOUND: ClosetErrorDefinition(
         code=SIMILARITY_EDGE_NOT_FOUND,

@@ -35,8 +35,11 @@ export type ClosetMetadataProjection = {
   pattern: string | null;
   brand: string | null;
   style_tags: string[] | null;
+  fit_tags: string[] | null;
   occasion_tags: string[] | null;
   season_tags: string[] | null;
+  silhouette: string | null;
+  attributes: string[] | null;
   confirmed_at: string | null;
   updated_at: string;
 };

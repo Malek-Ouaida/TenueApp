@@ -1,18 +1,13 @@
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, type Href } from "expo-router";
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { ScrollView, Pressable, StyleSheet, View } from "react-native";
 
-import { useOutfits } from "../outfits/provider";
+import { useAuth } from "../auth/provider";
+import { useClosetInsights, useClosetItemUsageIndex } from "../closet/insights";
+import { useInsightOverview } from "../home/overview";
+import { humanizeEnum } from "../lib/format";
 import { AppText } from "../ui";
-import {
-  CATEGORY_LABELS,
-  CLOSET_ITEMS,
-  getBrandCounts,
-  getCategoryCounts,
-  getColorCounts,
-  getStreak
-} from "../lib/reference/wardrobe";
 import { GlassIconButton } from "../ui/feature-components";
 import { featurePalette, featureShadows, featureTypography } from "../theme/feature";
 
@@ -25,18 +20,30 @@ type StatItem = {
 };
 
 export default function StatsScreen() {
-  const { outfits } = useOutfits();
-  const totalOutfits = Object.keys(outfits).length;
-  const streak = getStreak(outfits);
+  const { session } = useAuth();
+  const closetInsights = useClosetInsights(session?.access_token);
+  const overview = useInsightOverview(session?.access_token);
+  const mostWornIndex = useClosetItemUsageIndex(session?.access_token, { sort: "most_worn", maxItems: 40 });
+  const leastWornIndex = useClosetItemUsageIndex(session?.access_token, { sort: "least_worn", maxItems: 40 });
+  const mostWorn = mostWornIndex.snapshot.items[0] ?? null;
+  const leastWorn = leastWornIndex.snapshot.items[0] ?? null;
+  const topBrand = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of closetInsights.items) {
+      if (!item.brand) {
+        continue;
+      }
+      counts.set(item.brand, (counts.get(item.brand) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).sort((left, right) => right[1] - left[1])[0] ?? null;
+  }, [closetInsights.items]);
 
-  const categoryCounts = getCategoryCounts();
-  const topCategory = Object.entries(categoryCounts).sort((left, right) => right[1] - left[1])[0];
-  const colorCounts = getColorCounts();
-  const topColor = Object.entries(colorCounts).sort((left, right) => right[1] - left[1])[0];
-  const brandCounts = getBrandCounts();
-  const topBrand = Object.entries(brandCounts).sort((left, right) => right[1] - left[1])[0];
-  const mostWorn = [...CLOSET_ITEMS].sort((left, right) => right.timesWorn - left.timesWorn)[0];
-  const leastWorn = [...CLOSET_ITEMS].sort((left, right) => left.timesWorn - right.timesWorn)[0];
+  const totalWearLogs = overview.data?.all_time.total_wear_logs ?? 0;
+  const streak = overview.data?.streaks.current_streak_days ?? 0;
+  const longestStreak = overview.data?.streaks.longest_streak_days ?? 0;
+  const activeCoverageRatio = overview.data?.current_month.active_closet_coverage_ratio ?? 0;
+  const averageOutfitsPerWeek =
+    totalWearLogs > 0 ? Math.round(((overview.data?.current_month.total_wear_logs ?? 0) / 4) * 10) / 10 : 0;
 
   const sections: Array<{ title: string; items: StatItem[] }> = [
     {
@@ -45,29 +52,29 @@ export default function StatsScreen() {
         {
           icon: <MaterialCommunityIcons color={featurePalette.foreground} name="hanger" size={20} />,
           label: "Outfits Logged",
-          value: `${totalOutfits}`,
-          sub: "since January 2026",
+          value: `${totalWearLogs}`,
+          sub: "from confirmed wear logs",
           color: featurePalette.sage
         },
         {
           icon: <MaterialCommunityIcons color={featurePalette.coral} name="fire" size={20} />,
           label: "Current Streak",
           value: `${streak} days`,
-          sub: "your best: 12 days",
+          sub: `your best: ${longestStreak} days`,
           color: "rgba(255, 107, 107, 0.15)"
         },
         {
           icon: <Feather color={featurePalette.foreground} name="trending-up" size={20} />,
           label: "Avg. Outfits / Week",
-          value: `${Math.round((totalOutfits / 12) * 10) / 10}`,
-          sub: "last 3 months",
+          value: `${averageOutfitsPerWeek}`,
+          sub: "based on this month",
           color: "rgba(216, 235, 207, 0.2)"
         },
         {
           icon: <Feather color="#7BA2FF" name="calendar" size={20} />,
-          label: "Member Since",
-          value: "January 2026",
-          sub: "4 months of style",
+          label: "Unique Items Worn",
+          value: `${overview.data?.all_time.unique_items_worn ?? 0}`,
+          sub: "across all confirmed wear logs",
           color: "rgba(220, 234, 247, 0.35)"
         }
       ]
@@ -78,22 +85,22 @@ export default function StatsScreen() {
         {
           icon: <MaterialCommunityIcons color="#7658C3" name="repeat" size={20} />,
           label: "Total Items",
-          value: `${CLOSET_ITEMS.length}`,
+          value: `${closetInsights.insights.totalItems}`,
           sub: "in your closet",
           color: "rgba(232, 219, 255, 0.3)"
         },
         {
           icon: <MaterialCommunityIcons color={featurePalette.foreground} name="chart-bar" size={20} />,
           label: "Top Category",
-          value: topCategory ? CATEGORY_LABELS[topCategory[0]] ?? topCategory[0] : "—",
-          sub: topCategory ? `${topCategory[1]} items` : "",
+          value: closetInsights.insights.topCategory ? humanizeEnum(closetInsights.insights.topCategory.label) : "—",
+          sub: closetInsights.insights.topCategory ? `${closetInsights.insights.topCategory.count} items` : "",
           color: featurePalette.secondary
         },
         {
           icon: <MaterialCommunityIcons color="#C78B00" name="palette-outline" size={20} />,
           label: "Most Common Color",
-          value: topColor?.[0] ?? "—",
-          sub: topColor ? `${topColor[1]} items` : "",
+          value: closetInsights.insights.topColor ? humanizeEnum(closetInsights.insights.topColor.label) : "—",
+          sub: closetInsights.insights.topColor ? `${closetInsights.insights.topColor.count} items` : "",
           color: "rgba(255, 239, 161, 0.2)"
         },
         {
@@ -112,42 +119,46 @@ export default function StatsScreen() {
           icon: <MaterialCommunityIcons color="#C78B00" name="crown-outline" size={20} />,
           label: "Most Worn Item",
           value: mostWorn?.title ?? "—",
-          sub: mostWorn ? `${mostWorn.timesWorn} times · ${mostWorn.brand}` : "",
+          sub: mostWorn ? `${mostWorn.wear_count} times · ${humanizeEnum(mostWorn.category)}` : "",
           color: "rgba(255, 239, 161, 0.2)"
         },
         {
           icon: <Feather color={featurePalette.muted} name="clock" size={20} />,
           label: "Least Worn Item",
           value: leastWorn?.title ?? "—",
-          sub: leastWorn ? `${leastWorn.timesWorn} times · ${leastWorn.brand}` : "",
+          sub: leastWorn ? `${leastWorn.wear_count} times · ${humanizeEnum(leastWorn.category)}` : "",
           color: featurePalette.secondary
         },
         {
           icon: <Feather color="#FFB3C4" name="heart" size={20} />,
-          label: "Outfit Repeats",
-          value: "3",
-          sub: "you wore the same combo",
+          label: "Coverage",
+          value: `${Math.round(activeCoverageRatio * 100)}%`,
+          sub: "active closet worn this month",
           color: "rgba(255, 234, 242, 0.35)"
         },
         {
           icon: <Feather color="#C78B00" name="sun" size={20} />,
-          label: "Favorite Season",
-          value: "All Season",
-          sub: "most versatile pieces",
+          label: "Never Worn",
+          value: `${overview.data?.all_time.never_worn_item_count ?? 0}`,
+          sub: "confirmed closet items still untouched",
           color: "rgba(255, 239, 161, 0.15)"
         },
         {
           icon: <Feather color="#7658C3" name="moon" size={20} />,
-          label: "Favorite Occasion",
-          value: "Casual",
-          sub: "your comfort zone",
+          label: "Worn This Month",
+          value: `${overview.data?.current_month.unique_items_worn ?? 0}`,
+          sub: "unique closet items this month",
           color: "rgba(232, 219, 255, 0.2)"
         },
         {
           icon: <MaterialCommunityIcons color="#567848" name="star-four-points" size={20} />,
-          label: "Style Variety Score",
-          value: "7.2 / 10",
-          sub: "great range!",
+          label: "Processed Closet",
+          value: `${Math.round(
+            closetInsights.insights.totalItems === 0
+              ? 0
+              : (closetInsights.insights.processedItems / closetInsights.insights.totalItems) * 100
+          )}%`,
+          sub: "items with polished imagery",
           color: "rgba(216, 235, 207, 0.25)"
         }
       ]

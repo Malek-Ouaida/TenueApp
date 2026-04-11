@@ -50,7 +50,9 @@ from app.domains.closet.taxonomy import SUPPORTED_FIELD_NAMES
 REEXTRACT_METADATA_OPERATION = "reextract_metadata_extraction"
 REEXTRACT_RESOURCE_TYPE = "closet_item"
 
-LIST_FIELD_NAMES = frozenset({"colors", "style_tags", "occasion_tags", "season_tags"})
+LIST_FIELD_NAMES = frozenset(
+    {"colors", "style_tags", "fit_tags", "occasion_tags", "season_tags", "attributes"}
+)
 
 
 @dataclass(frozen=True)

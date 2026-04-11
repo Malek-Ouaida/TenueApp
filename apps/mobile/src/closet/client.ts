@@ -2,6 +2,9 @@ import { apiRequest } from "../lib/api";
 import type {
   ClosetBrowseFilters,
   ClosetBrowseListResponse,
+  ClosetConfirmedItemEditSnapshot,
+  ClosetConfirmedItemImageReorderRequest,
+  ClosetConfirmedItemPatchRequest,
   ClosetConfirmRequest,
   ClosetDraftSnapshot,
   ClosetExtractionSnapshot,
@@ -26,7 +29,7 @@ function buildAuthHeaders(accessToken: string, extraHeaders?: Record<string, str
   };
 }
 
-function buildQueryString(params: Record<string, string | number | null | undefined>) {
+function buildQueryString(params: Record<string, string | number | boolean | null | undefined>) {
   const searchParams = new URLSearchParams();
 
   for (const [key, value] of Object.entries(params)) {
@@ -133,7 +136,7 @@ export function patchClosetReview(
   itemId: string,
   payload: ClosetReviewPatchRequest
 ) {
-  return apiRequest<ClosetItemReviewSnapshot>(`/closet/items/${itemId}`, {
+  return apiRequest<ClosetItemReviewSnapshot>(`/closet/items/${itemId}/review`, {
     method: "PATCH",
     headers: buildAuthHeaders(accessToken),
     body: payload
@@ -194,9 +197,34 @@ export function getConfirmedClosetItems(
   );
 }
 
-export function getConfirmedClosetItemDetail(accessToken: string, itemId: string) {
-  return apiRequest<ClosetItemDetailSnapshot>(`/closet/items/${itemId}`, {
+export function getConfirmedClosetItemDetail(
+  accessToken: string,
+  itemId: string,
+  options: { includeArchived?: boolean } = {}
+) {
+  return apiRequest<ClosetItemDetailSnapshot>(
+    `/closet/items/${itemId}${buildQueryString({ include_archived: options.includeArchived })}`,
+    {
     headers: buildAuthHeaders(accessToken)
+    }
+  );
+}
+
+export function getConfirmedClosetItemEdit(accessToken: string, itemId: string) {
+  return apiRequest<ClosetConfirmedItemEditSnapshot>(`/closet/items/${itemId}/edit`, {
+    headers: buildAuthHeaders(accessToken)
+  });
+}
+
+export function patchConfirmedClosetItem(
+  accessToken: string,
+  itemId: string,
+  payload: ClosetConfirmedItemPatchRequest
+) {
+  return apiRequest<ClosetConfirmedItemEditSnapshot>(`/closet/items/${itemId}/edit`, {
+    method: "PATCH",
+    headers: buildAuthHeaders(accessToken),
+    body: payload
   });
 }
 
@@ -216,6 +244,73 @@ export function getClosetItemHistory(
 export function archiveClosetItem(accessToken: string, itemId: string) {
   return apiRequest<void>(`/closet/items/${itemId}/archive`, {
     method: "POST",
+    headers: buildAuthHeaders(accessToken)
+  });
+}
+
+export function restoreClosetItem(accessToken: string, itemId: string) {
+  return apiRequest<void>(`/closet/items/${itemId}/restore`, {
+    method: "POST",
+    headers: buildAuthHeaders(accessToken)
+  });
+}
+
+export function createConfirmedClosetItemUploadIntent(
+  accessToken: string,
+  itemId: string,
+  payload: ClosetUploadIntentRequest
+) {
+  return apiRequest<ClosetUploadIntentResponse>(`/closet/items/${itemId}/images/upload-intents`, {
+    method: "POST",
+    headers: buildAuthHeaders(accessToken),
+    body: payload
+  });
+}
+
+export function completeConfirmedClosetItemUpload(
+  accessToken: string,
+  itemId: string,
+  uploadIntentId: string
+) {
+  return apiRequest<ClosetItemDetailSnapshot>(`/closet/items/${itemId}/images/uploads/complete`, {
+    method: "POST",
+    headers: buildAuthHeaders(accessToken),
+    body: {
+      upload_intent_id: uploadIntentId
+    }
+  });
+}
+
+export function reorderConfirmedClosetItemImages(
+  accessToken: string,
+  itemId: string,
+  payload: ClosetConfirmedItemImageReorderRequest
+) {
+  return apiRequest<ClosetItemDetailSnapshot>(`/closet/items/${itemId}/images/reorder`, {
+    method: "POST",
+    headers: buildAuthHeaders(accessToken),
+    body: payload
+  });
+}
+
+export function setConfirmedClosetItemPrimaryImage(
+  accessToken: string,
+  itemId: string,
+  imageId: string
+) {
+  return apiRequest<ClosetItemDetailSnapshot>(`/closet/items/${itemId}/images/${imageId}/primary`, {
+    method: "POST",
+    headers: buildAuthHeaders(accessToken)
+  });
+}
+
+export function removeConfirmedClosetItemImage(
+  accessToken: string,
+  itemId: string,
+  imageId: string
+) {
+  return apiRequest<ClosetItemDetailSnapshot>(`/closet/items/${itemId}/images/${imageId}`, {
+    method: "DELETE",
     headers: buildAuthHeaders(accessToken)
   });
 }

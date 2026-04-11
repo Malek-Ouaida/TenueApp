@@ -75,20 +75,35 @@ def create_wear_log(
     headers: dict[str, str],
     *,
     wear_date: str,
+    mode: str | None = None,
     items: Sequence[dict[str, Any]] | None = None,
     outfit_id: str | None = None,
+    worn_at: str | None = None,
+    captured_at: str | None = None,
+    timezone_name: str | None = None,
     context: str | None = "casual",
+    vibe: str | None = None,
     notes: str | None = "Logged from tests.",
 ):
     payload: dict[str, Any] = {"wear_date": wear_date}
-    if outfit_id is not None:
+    if mode == "photo_upload":
+        payload["mode"] = "photo_upload"
+    elif outfit_id is not None:
         payload["mode"] = "saved_outfit"
         payload["outfit_id"] = outfit_id
     else:
         payload["mode"] = "manual_items"
         payload["items"] = list(items or [])
+    if worn_at is not None:
+        payload["worn_at"] = worn_at
+    if captured_at is not None:
+        payload["captured_at"] = captured_at
+    if timezone_name is not None:
+        payload["timezone_name"] = timezone_name
     if context is not None:
         payload["context"] = context
+    if vibe is not None:
+        payload["vibe"] = vibe
     if notes is not None:
         payload["notes"] = notes
     return client.post("/wear-logs", headers=wear_log_headers(headers), json=payload)
@@ -266,7 +281,7 @@ def test_create_wear_log_rejects_duplicate_item_ids(
     }
 
 
-def test_create_wear_log_rejects_second_log_for_same_date(
+def test_create_wear_log_allows_multiple_logs_on_same_date(
     client: TestClient,
     db_session: Session,
     fake_storage_client: Any,
@@ -289,18 +304,40 @@ def test_create_wear_log_rejects_second_log_for_same_date(
         client,
         headers,
         wear_date="2026-04-06",
+        worn_at="2026-04-06T09:00:00Z",
         items=[{"closet_item_id": str(item_id), "role": "top"}],
     )
     second_response = create_wear_log(
         client,
         headers,
         wear_date="2026-04-06",
+        worn_at="2026-04-06T19:00:00Z",
         items=[{"closet_item_id": str(item_id), "role": "top"}],
     )
 
     assert first_response.status_code == 201
-    assert second_response.status_code == 409
-    assert second_response.json() == {"detail": "You already have a wear log for that date."}
+    assert second_response.status_code == 201
+    assert first_response.json()["id"] != second_response.json()["id"]
+
+    day_logs_response = client.get("/wear-logs?wear_date=2026-04-06", headers=headers)
+    assert day_logs_response.status_code == 200
+    assert [item["worn_at"] for item in day_logs_response.json()["items"]] == [
+        "2026-04-06T19:00:00Z",
+        "2026-04-06T09:00:00Z",
+    ]
+
+    calendar_response = client.get(
+        "/wear-logs/calendar?start_date=2026-04-06&end_date=2026-04-06",
+        headers=headers,
+    )
+    assert calendar_response.status_code == 200
+    day = calendar_response.json()["days"][0]
+    assert day["event_count"] == 2
+    assert day["primary_event_id"] == second_response.json()["id"]
+    assert [event["id"] for event in day["events"]] == [
+        second_response.json()["id"],
+        first_response.json()["id"],
+    ]
 
 
 def test_wear_log_detail_and_timeline_pagination(
@@ -526,7 +563,7 @@ def test_update_wear_log_replaces_composition_atomically(
     ]
 
 
-def test_update_wear_log_rejects_date_collision(
+def test_update_wear_log_can_move_event_onto_a_date_with_other_events(
     client: TestClient,
     db_session: Session,
     fake_storage_client: Any,
@@ -548,12 +585,14 @@ def test_update_wear_log_rejects_date_collision(
         client,
         headers,
         wear_date="2026-04-05",
+        worn_at="2026-04-05T10:00:00Z",
         items=[{"closet_item_id": str(item_id), "role": "top"}],
     )
     second_log = create_wear_log(
         client,
         headers,
         wear_date="2026-04-06",
+        worn_at="2026-04-06T18:00:00Z",
         items=[{"closet_item_id": str(item_id), "role": "top"}],
     )
 
@@ -564,8 +603,15 @@ def test_update_wear_log_rejects_date_collision(
     )
 
     assert second_log.status_code == 201
-    assert response.status_code == 409
-    assert response.json() == {"detail": "You already have a wear log for that date."}
+    assert response.status_code == 200
+    assert response.json()["wear_date"] == "2026-04-06"
+
+    day_logs_response = client.get("/wear-logs?wear_date=2026-04-06", headers=headers)
+    assert day_logs_response.status_code == 200
+    assert {item["id"] for item in day_logs_response.json()["items"]} == {
+        first_log.json()["id"],
+        second_log.json()["id"],
+    }
 
 
 def test_delete_wear_log_removes_it(

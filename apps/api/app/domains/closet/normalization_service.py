@@ -75,8 +75,11 @@ class NormalizationMetadataProjectionSnapshot:
     pattern: str | None
     brand: str | None
     style_tags: list[str] | None
+    fit_tags: list[str] | None
     occasion_tags: list[str] | None
     season_tags: list[str] | None
+    silhouette: str | None
+    attributes: list[str] | None
     confirmed_at: Any
     updated_at: Any
 
@@ -204,8 +207,11 @@ class ClosetNormalizationService:
                 pattern=projection.pattern,
                 brand=projection.brand,
                 style_tags=projection.style_tags,
+                fit_tags=projection.fit_tags,
                 occasion_tags=projection.occasion_tags,
                 season_tags=projection.season_tags,
+                silhouette=projection.silhouette,
+                attributes=projection.attributes,
                 confirmed_at=projection.confirmed_at,
                 updated_at=projection.updated_at,
             ),

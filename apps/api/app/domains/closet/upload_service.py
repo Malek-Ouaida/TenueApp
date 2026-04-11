@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -59,6 +60,8 @@ from app.domains.closet.taxonomy import REQUIRED_CONFIRMATION_FIELDS
 CREATE_DRAFT_OPERATION = "create_draft"
 COMPLETE_UPLOAD_OPERATION = "complete_upload"
 RESOURCE_TYPE_CLOSET_ITEM = "closet_item"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -355,6 +358,45 @@ class ClosetDraftUploadService:
 
         self.session.refresh(item)
         return item, 200
+
+    def cleanup_expired_upload_intents(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> int:
+        current_time = normalize_utc_datetime(now or utcnow())
+        expired_intents = self.repository.list_expired_pending_upload_intents(
+            now=current_time,
+            limit=limit,
+        )
+        if not expired_intents:
+            return 0
+
+        staging_objects = [(intent.staging_bucket, intent.staging_key) for intent in expired_intents]
+        for upload_intent in expired_intents:
+            self.repository.mark_upload_intent_expired(upload_intent=upload_intent)
+            item = self.repository.get_item(item_id=upload_intent.closet_item_id)
+            if item is not None:
+                self.repository.create_audit_event(
+                    closet_item_id=item.id,
+                    actor_type=AuditActorType.SYSTEM,
+                    actor_user_id=None,
+                    event_type="upload_intent_expired",
+                    payload={"upload_intent_id": str(upload_intent.id)},
+                )
+        self.session.commit()
+
+        for bucket, key in staging_objects:
+            try:
+                self.storage.delete_object(bucket=bucket, key=key)
+            except Exception:
+                logger.warning(
+                    "closet_upload_staging_cleanup_failed",
+                    extra={"bucket": bucket, "key": key},
+                )
+
+        return len(expired_intents)
 
     def list_original_images(
         self,

@@ -33,7 +33,7 @@ function ReviewLoadingScreen() {
 
 export default function ReviewQueueScreen() {
   const { session } = useAuth();
-  const reviewQueue = useReviewQueue(session?.access_token, 50);
+  const reviewQueue = useReviewQueue(session?.access_token, 50, { disableCache: true });
 
   const reviewableItems = useMemo(
     () => reviewQueue.items.filter(isReviewableDraft),

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.storage import ObjectStorageClient
-from app.domains.closet.browse_service import BrowseListItemSnapshot
+from app.domains.closet.browse_service import BrowseListItemSnapshot, build_browse_list_item_snapshot
 from app.domains.closet.errors import (
     CLOSET_ITEM_NOT_FOUND,
     INVALID_LIFECYCLE_TRANSITION,
@@ -510,32 +510,11 @@ class ClosetSimilarityService:
         other_projection: ClosetItemMetadataProjection,
         images_by_role: dict[ClosetItemImageRole, tuple[ClosetItemImage, MediaAsset]],
     ) -> SimilarityListItemSnapshot:
-        confirmed_at = other_item.confirmed_at
-        assert confirmed_at is not None
-        other_item_snapshot = BrowseListItemSnapshot(
-            item_id=other_item.id,
-            confirmed_at=confirmed_at,
-            updated_at=other_item.updated_at,
-            title=other_projection.title,
-            category=other_projection.category,
-            subcategory=other_projection.subcategory,
-            primary_color=other_projection.primary_color,
-            secondary_colors=other_projection.secondary_colors,
-            material=other_projection.material,
-            pattern=other_projection.pattern,
-            brand=other_projection.brand,
-            display_image=self._build_preview_image(
-                images_by_role.get(ClosetItemImageRole.PROCESSED),
-                primary_image_id=other_item.primary_image_id,
-            )
-            or self._build_preview_image(
-                images_by_role.get(ClosetItemImageRole.ORIGINAL),
-                primary_image_id=other_item.primary_image_id,
-            ),
-            thumbnail_image=self._build_preview_image(
-                images_by_role.get(ClosetItemImageRole.THUMBNAIL),
-                primary_image_id=other_item.primary_image_id,
-            ),
+        other_item_snapshot = build_browse_list_item_snapshot(
+            item=other_item,
+            projection=other_projection,
+            images_by_role=images_by_role,
+            storage=self.storage,
         )
         edge_snapshot = self._build_edge_snapshot(edge=edge)
         return SimilarityListItemSnapshot(

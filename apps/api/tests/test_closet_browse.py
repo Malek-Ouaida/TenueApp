@@ -654,9 +654,15 @@ def test_invalid_browse_cursor_and_filters_return_422(
     )
 
     assert invalid_cursor.status_code == 422
-    assert invalid_cursor.json()["detail"] == "Invalid browse cursor."
+    assert invalid_cursor.json()["detail"]["code"] == "invalid_browse_request"
+    assert invalid_cursor.json()["detail"]["message"] == "Invalid browse cursor."
     assert invalid_subcategory.status_code == 422
+    assert invalid_subcategory.json()["detail"]["code"] == "invalid_browse_request"
+    assert invalid_subcategory.json()["detail"]["message"] == (
+        "Invalid closet browse filter: unsupported subcategory value."
+    )
     assert invalid_pair.status_code == 422
+    assert invalid_pair.json()["detail"]["code"] == "invalid_browse_request"
 
 
 def test_detail_returns_404_for_other_users_and_unconfirmed_items(

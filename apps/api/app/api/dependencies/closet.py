@@ -12,6 +12,8 @@ from app.domains.closet.background_removal import (
     build_background_removal_provider,
 )
 from app.domains.closet.browse_service import ClosetBrowseService
+from app.domains.closet.confirmed_item_media_service import ConfirmedClosetItemMediaService
+from app.domains.closet.confirmed_item_service import ConfirmedClosetItemService
 from app.domains.closet.image_processing_service import ClosetImageProcessingService
 from app.domains.closet.metadata_extraction import (
     MetadataExtractionProvider,
@@ -152,6 +154,38 @@ def get_closet_review_service(
         extraction_service=extraction_service,
         normalization_service=normalization_service,
         similarity_service=similarity_service,
+    )
+
+
+def get_closet_confirmed_item_service(
+    db_session: Annotated[Session, Depends(get_db_session)],
+    lifecycle_service: Annotated[ClosetLifecycleService, Depends(get_closet_lifecycle_service)],
+    browse_service: Annotated[ClosetBrowseService, Depends(get_closet_browse_service)],
+    similarity_service: Annotated[ClosetSimilarityService, Depends(get_closet_similarity_service)],
+) -> ConfirmedClosetItemService:
+    return ConfirmedClosetItemService(
+        session=db_session,
+        repository=ClosetRepository(db_session),
+        lifecycle_service=lifecycle_service,
+        browse_service=browse_service,
+        similarity_service=similarity_service,
+    )
+
+
+def get_closet_confirmed_item_media_service(
+    db_session: Annotated[Session, Depends(get_db_session)],
+    storage_client: Annotated[ObjectStorageClient, Depends(get_storage_client)],
+    browse_service: Annotated[ClosetBrowseService, Depends(get_closet_browse_service)],
+    processing_service: Annotated[
+        ClosetImageProcessingService, Depends(get_closet_image_processing_service)
+    ],
+) -> ConfirmedClosetItemMediaService:
+    return ConfirmedClosetItemMediaService(
+        session=db_session,
+        repository=ClosetRepository(db_session),
+        storage=storage_client,
+        browse_service=browse_service,
+        image_processing_service=processing_service,
     )
 
 

@@ -106,6 +106,7 @@ class ClosetBrowseService:
         color: str | None,
         material: str | None,
         pattern: str | None,
+        include_archived: bool = False,
     ) -> tuple[list[BrowseListItemSnapshot], str | None]:
         browse_query = self._build_browse_query(
             query=query,
@@ -127,6 +128,7 @@ class ClosetBrowseService:
             primary_color=browse_query.primary_color,
             material=browse_query.material,
             pattern=browse_query.pattern,
+            include_archived=include_archived,
         )
         has_more = len(rows) > limit
         visible_rows = rows[:limit]
@@ -140,10 +142,11 @@ class ClosetBrowseService:
             ],
         )
         items = [
-            self._build_list_item_snapshot(
+            build_browse_list_item_snapshot(
                 item=item,
                 projection=projection,
                 images_by_role=images_by_item.get(item.id, {}),
+                storage=self.storage,
             )
             for item, projection in visible_rows
         ]
@@ -160,10 +163,12 @@ class ClosetBrowseService:
         *,
         item_id: UUID,
         user_id: UUID,
+        include_archived: bool = False,
     ) -> BrowseDetailSnapshot:
         row = self.repository.get_confirmed_item_with_projection_for_user(
             item_id=item_id,
             user_id=user_id,
+            include_archived=include_archived,
         )
         if row is None:
             raise build_error(CLOSET_ITEM_NOT_FOUND)
@@ -300,33 +305,11 @@ class ClosetBrowseService:
         projection: ClosetItemMetadataProjection,
         images_by_role: dict[ClosetItemImageRole, tuple[ClosetItemImage, MediaAsset]],
     ) -> BrowseListItemSnapshot:
-        processed_image = self._build_image_snapshot(
-            images_by_role.get(ClosetItemImageRole.PROCESSED)
-        )
-        original_image = self._build_image_snapshot(
-            images_by_role.get(ClosetItemImageRole.ORIGINAL)
-        )
-        thumbnail_image = self._build_image_snapshot(
-            images_by_role.get(ClosetItemImageRole.THUMBNAIL)
-        )
-        confirmed_at = getattr(item, "confirmed_at")
-        assert confirmed_at is not None
-
-        return BrowseListItemSnapshot(
-            item_id=getattr(item, "id"),
-            confirmed_at=confirmed_at,
-            updated_at=getattr(item, "updated_at"),
-            title=projection.title,
-            category=projection.category,
-            subcategory=projection.subcategory,
-            primary_color=projection.primary_color,
-            secondary_colors=projection.secondary_colors,
-            material=projection.material,
-            pattern=projection.pattern,
-            brand=projection.brand,
-            season_tags=projection.season_tags,
-            display_image=processed_image or original_image,
-            thumbnail_image=thumbnail_image,
+        return build_browse_list_item_snapshot(
+            item=item,
+            projection=projection,
+            images_by_role=images_by_role,
+            storage=self.storage,
         )
 
     def _build_original_image_snapshots(self, *, item: object) -> list[ProcessingSnapshotImage]:
@@ -409,3 +392,71 @@ def normalize_utc_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def build_browse_list_item_snapshot(
+    *,
+    item: object,
+    projection: ClosetItemMetadataProjection,
+    images_by_role: dict[ClosetItemImageRole, tuple[ClosetItemImage, MediaAsset]],
+    storage: ObjectStorageClient,
+) -> BrowseListItemSnapshot:
+    processed_image = build_browse_image_snapshot(
+        images_by_role.get(ClosetItemImageRole.PROCESSED),
+        storage=storage,
+    )
+    original_image = build_browse_image_snapshot(
+        images_by_role.get(ClosetItemImageRole.ORIGINAL),
+        storage=storage,
+    )
+    thumbnail_image = build_browse_image_snapshot(
+        images_by_role.get(ClosetItemImageRole.THUMBNAIL),
+        storage=storage,
+    )
+    confirmed_at = getattr(item, "confirmed_at")
+    assert confirmed_at is not None
+
+    return BrowseListItemSnapshot(
+        item_id=getattr(item, "id"),
+        confirmed_at=confirmed_at,
+        updated_at=getattr(item, "updated_at"),
+        title=projection.title,
+        category=projection.category,
+        subcategory=projection.subcategory,
+        primary_color=projection.primary_color,
+        secondary_colors=projection.secondary_colors,
+        material=projection.material,
+        pattern=projection.pattern,
+        brand=projection.brand,
+        season_tags=projection.season_tags,
+        display_image=processed_image or original_image,
+        thumbnail_image=thumbnail_image,
+    )
+
+
+def build_browse_image_snapshot(
+    image_record: tuple[ClosetItemImage, MediaAsset] | None,
+    *,
+    storage: ObjectStorageClient,
+    primary_image_id: UUID | None = None,
+) -> ProcessingSnapshotImage | None:
+    if image_record is None:
+        return None
+    item_image, asset = image_record
+    presigned_download = storage.generate_presigned_download(
+        bucket=asset.bucket,
+        key=asset.key,
+        expires_in_seconds=settings.closet_media_download_ttl_seconds,
+    )
+    return ProcessingSnapshotImage(
+        asset_id=asset.id,
+        image_id=item_image.id,
+        role=item_image.role.value,
+        position=item_image.position if item_image.role == ClosetItemImageRole.ORIGINAL else None,
+        is_primary=primary_image_id == item_image.id,
+        mime_type=asset.mime_type,
+        width=asset.width,
+        height=asset.height,
+        url=presigned_download.url,
+        expires_at=presigned_download.expires_at,
+    )

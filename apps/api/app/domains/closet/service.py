@@ -141,6 +141,38 @@ class ClosetLifecycleService:
         item = self.repository.require_item_for_user(item_id=item_id, user_id=user_id)
         self._ensure_not_archived(item)
 
+        if item.lifecycle_status == LifecycleStatus.CONFIRMED:
+            if processing_status in {ProcessingStatus.PENDING, ProcessingStatus.RUNNING} and not (
+                self.repository.has_active_primary_image(item=item)
+            ):
+                raise build_error(MISSING_PRIMARY_IMAGE)
+            item.processing_status = processing_status
+            item.failure_summary = failure_summary
+            item.review_status = ReviewStatus.CONFIRMED
+            self.repository.create_audit_event(
+                closet_item_id=item.id,
+                actor_type=actor_type,
+                actor_user_id=actor_user_id,
+                event_type=event_type,
+                payload={
+                    "processing_status": processing_status.value,
+                    "lifecycle_status": item.lifecycle_status.value,
+                    "failure_summary": failure_summary,
+                    **(payload or {}),
+                }
+                if payload is not None
+                else {
+                    "processing_status": processing_status.value,
+                    "lifecycle_status": item.lifecycle_status.value,
+                    "failure_summary": failure_summary,
+                },
+            )
+            self.repository.upsert_metadata_projection(item=item, taxonomy_version=TAXONOMY_VERSION)
+            if commit:
+                self.session.commit()
+                self.session.refresh(item)
+            return item
+
         if processing_status == ProcessingStatus.RUNNING:
             if not self.repository.has_active_primary_image(item=item):
                 raise build_error(MISSING_PRIMARY_IMAGE)
@@ -329,13 +361,34 @@ class ClosetLifecycleService:
             raise build_error(INVALID_LIFECYCLE_TRANSITION)
 
         item.lifecycle_status = LifecycleStatus.ARCHIVED
+        item.archived_at = utcnow()
         self.repository.create_audit_event(
             closet_item_id=item.id,
             actor_type=AuditActorType.USER,
             actor_user_id=user_id,
             event_type="item_archived",
-            payload={"archived_at": utcnow().isoformat()},
+            payload={"archived_at": item.archived_at.isoformat()},
         )
+        self.session.commit()
+        self.session.refresh(item)
+        return item
+
+    def restore_item(self, *, item_id: UUID, user_id: UUID) -> ClosetItem:
+        item = self.repository.require_item_for_user(item_id=item_id, user_id=user_id)
+        if item.lifecycle_status != LifecycleStatus.ARCHIVED or item.confirmed_at is None:
+            raise build_error(INVALID_LIFECYCLE_TRANSITION)
+
+        item.lifecycle_status = LifecycleStatus.CONFIRMED
+        item.archived_at = None
+        item.review_status = ReviewStatus.CONFIRMED
+        self.repository.create_audit_event(
+            closet_item_id=item.id,
+            actor_type=AuditActorType.USER,
+            actor_user_id=user_id,
+            event_type="item_restored",
+            payload={"restored_at": utcnow().isoformat()},
+        )
+        self.repository.upsert_metadata_projection(item=item, taxonomy_version=TAXONOMY_VERSION)
         self.session.commit()
         self.session.refresh(item)
         return item

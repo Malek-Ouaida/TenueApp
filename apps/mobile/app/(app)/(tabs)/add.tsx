@@ -31,6 +31,7 @@ export default function AddScreen() {
       }
 
       await triggerSuccessHaptic();
+      router.push(`/review/${draft.id}` as Href);
     } catch {
       await triggerErrorHaptic();
     }
@@ -44,6 +45,7 @@ export default function AddScreen() {
       }
 
       await triggerSuccessHaptic();
+      router.push(`/review/${draft.id}` as Href);
     } catch {
       await triggerErrorHaptic();
     }

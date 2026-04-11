@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from app.core.config import CLOSET_UPLOAD_MAX_FILE_SIZE, settings
 from app.core.storage import InMemoryStorageClient
 from app.domains.auth.models import User
+from app.domains.closet.repository import ClosetRepository
+from app.domains.closet.upload_service import ClosetDraftUploadService
 from app.domains.closet.models import (
     ClosetItem,
     ClosetItemAuditEvent,
@@ -397,6 +399,65 @@ def test_finalize_upload_rejects_expired_intent(
     )
 
     assert response.status_code == 409
+
+
+def test_cleanup_expired_upload_intents_expires_records_and_cleans_staging(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: InMemoryStorageClient,
+) -> None:
+    headers = register_and_get_headers(client, email="cleanup-expired-upload@example.com")
+    draft = create_draft(client, headers, idempotency_key="cleanup-expired-draft").json()
+    image_bytes = build_image_bytes()
+    upload_response = create_upload_intent(
+        client,
+        headers,
+        draft_id=draft["id"],
+        file_size=len(image_bytes),
+        sha256=sha256_hex(image_bytes),
+    )
+    assert upload_response.status_code == 200
+    upload_to_fake_storage(
+        fake_storage_client,
+        upload_response=upload_response.json(),
+        content=image_bytes,
+    )
+
+    upload_intent = db_session.execute(
+        select(ClosetUploadIntent).where(
+            ClosetUploadIntent.id == UUID(upload_response.json()["upload_intent_id"])
+        )
+    ).scalar_one()
+    upload_intent.expires_at = datetime.now(UTC) - timedelta(minutes=5)
+    db_session.commit()
+
+    service = ClosetDraftUploadService(
+        session=db_session,
+        repository=ClosetRepository(db_session),
+        storage=fake_storage_client,
+        image_processing_service=object(),  # not used by cleanup_expired_upload_intents
+    )
+
+    cleaned = service.cleanup_expired_upload_intents()
+
+    db_session.refresh(upload_intent)
+    audit_events = list(
+        db_session.execute(
+            select(ClosetItemAuditEvent).where(
+                ClosetItemAuditEvent.closet_item_id == UUID(draft["id"])
+            )
+        ).scalars()
+    )
+    assert cleaned == 1
+    assert upload_intent.status.value == "expired"
+    assert (
+        fake_storage_client.head_object(
+            bucket=upload_intent.staging_bucket,
+            key=upload_intent.staging_key,
+        )
+        is None
+    )
+    assert "upload_intent_expired" in [event.event_type for event in audit_events]
 
 
 def test_finalize_upload_rejects_missing_object(client: TestClient) -> None:

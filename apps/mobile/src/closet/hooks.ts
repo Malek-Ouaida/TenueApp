@@ -18,6 +18,7 @@ import {
   getConfirmedClosetItemDetail,
   getConfirmedClosetItems,
   markSimilarityEdgeDuplicate,
+  restoreClosetItem,
   patchClosetReview,
   retryClosetReview
 } from "./client";
@@ -242,8 +243,13 @@ export function useClosetMetadataOptions(accessToken?: string | null) {
   return { data, error, isLoading };
 }
 
-export function useReviewQueue(accessToken?: string | null, limit = 20) {
-  const cacheKey = accessToken ? buildReviewQueueCacheKey(accessToken, limit) : null;
+export function useReviewQueue(
+  accessToken?: string | null,
+  limit = 20,
+  options: { disableCache?: boolean } = {}
+) {
+  const disableCache = options.disableCache ?? false;
+  const cacheKey = !disableCache && accessToken ? buildReviewQueueCacheKey(accessToken, limit) : null;
   const cachedQueue = cacheKey ? getCachedReviewQueue(cacheKey) : null;
   const [items, setItems] = useState<ClosetDraftSnapshot[]>(cachedQueue?.items ?? []);
   const [nextCursor, setNextCursor] = useState<string | null>(cachedQueue?.nextCursor ?? null);
@@ -312,7 +318,7 @@ export function useReviewQueue(accessToken?: string | null, limit = 20) {
       return;
     }
 
-    if (cachedQueue) {
+    if (cachedQueue && !disableCache) {
       setItems(cachedQueue.items);
       setNextCursor(cachedQueue.nextCursor);
       setIsLoading(false);
@@ -324,7 +330,7 @@ export function useReviewQueue(accessToken?: string | null, limit = 20) {
     setNextCursor(null);
     setIsLoading(true);
     void load(undefined, "replace");
-  }, [accessToken, cachedQueue, limit]);
+  }, [accessToken, cachedQueue, disableCache, limit]);
 
   return {
     error,
@@ -396,6 +402,7 @@ export function useConfirmedClosetBrowse(
     accessToken,
     filters.category,
     filters.color,
+    filters.include_archived,
     filters.material,
     filters.pattern,
     filters.query,
@@ -419,10 +426,16 @@ export function useConfirmedClosetBrowse(
   };
 }
 
-export function useClosetItemDetail(accessToken?: string | null, itemId?: string | null) {
+export function useClosetItemDetail(
+  accessToken?: string | null,
+  itemId?: string | null,
+  options: { includeArchived?: boolean } = {}
+) {
+  const includeArchived = options.includeArchived ?? false;
   const [detail, setDetail] = useState<ClosetItemDetailSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isArchiving, setIsArchiving] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -436,7 +449,9 @@ export function useClosetItemDetail(accessToken?: string | null, itemId?: string
     setError(null);
 
     try {
-      const response = await getConfirmedClosetItemDetail(accessToken, itemId);
+      const response = await getConfirmedClosetItemDetail(accessToken, itemId, {
+        includeArchived
+      });
       setDetail(response);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Closet detail could not be loaded.");
@@ -447,7 +462,7 @@ export function useClosetItemDetail(accessToken?: string | null, itemId?: string
 
   useEffect(() => {
     void load();
-  }, [accessToken, itemId]);
+  }, [accessToken, includeArchived, itemId]);
 
   async function archive() {
     if (!accessToken || !itemId) {
@@ -468,13 +483,35 @@ export function useClosetItemDetail(accessToken?: string | null, itemId?: string
     }
   }
 
+  async function restore() {
+    if (!accessToken || !itemId) {
+      return false;
+    }
+
+    setIsRestoring(true);
+    setError(null);
+
+    try {
+      await restoreClosetItem(accessToken, itemId);
+      return true;
+    } catch (restoreError) {
+      setError(restoreError instanceof Error ? restoreError.message : "Restore failed.");
+      return false;
+    } finally {
+      setIsRestoring(false);
+    }
+  }
+
   return {
     archive,
     detail,
     error,
     isArchiving,
     isLoading,
-    refresh: load
+    isRestoring,
+    refresh: load,
+    restore,
+    setDetail
   };
 }
 

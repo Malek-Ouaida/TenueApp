@@ -644,7 +644,7 @@ def test_reprocess_rejects_when_processing_is_already_scheduled(
     assert response.json()["detail"]["code"] == "processing_already_scheduled"
 
 
-def test_reprocess_rejects_confirmed_item(
+def test_reprocess_accepts_confirmed_item(
     client: TestClient,
     db_session: Session,
     fake_storage_client: InMemoryStorageClient,
@@ -662,6 +662,17 @@ def test_reprocess_rejects_confirmed_item(
     item = db_session.execute(select(ClosetItem).where(ClosetItem.id == item_id)).scalar_one()
     item.lifecycle_status = LifecycleStatus.CONFIRMED
     item.processing_status = ProcessingStatus.COMPLETED
+    pending_jobs = list(
+        db_session.execute(
+            select(ClosetJob).where(
+                ClosetJob.closet_item_id == item_id,
+                ClosetJob.job_kind == ProcessingRunType.IMAGE_PROCESSING,
+                ClosetJob.status.in_([ClosetJobStatus.PENDING, ClosetJobStatus.RUNNING]),
+            )
+        ).scalars()
+    )
+    for job in pending_jobs:
+        job.status = ClosetJobStatus.COMPLETED
     db_session.commit()
 
     response = client.post(
@@ -669,8 +680,9 @@ def test_reprocess_rejects_confirmed_item(
         headers={**headers, "Idempotency-Key": "reprocess-confirmed-key"},
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "invalid_lifecycle_transition"
+    assert response.status_code == 202
+    assert response.json()["lifecycle_status"] == "confirmed"
+    assert response.json()["processing_status"] == "pending"
 
 
 def test_reprocess_rejects_archived_item(

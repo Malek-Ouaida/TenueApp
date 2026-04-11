@@ -14,8 +14,11 @@ export type ClosetMetadataOptionsResponse = {
   materials: string[];
   patterns: string[];
   style_tags: string[];
+  fit_tags: string[];
   occasion_tags: string[];
   season_tags: string[];
+  silhouettes: string[];
+  attributes: string[];
 };
 
 export type ClosetProcessingImageSnapshot = {
@@ -147,8 +150,11 @@ export type ClosetMetadataProjectionSnapshot = {
   pattern: string | null;
   brand: string | null;
   style_tags: string[] | null;
+  fit_tags: string[] | null;
   occasion_tags: string[] | null;
   season_tags: string[] | null;
+  silhouette: string | null;
+  attributes: string[] | null;
   confirmed_at: string | null;
   updated_at: string;
 };
@@ -165,6 +171,7 @@ export type ClosetBrowseListItemSnapshot = {
   material: string | null;
   pattern: string | null;
   brand: string | null;
+  season_tags: string[] | null;
   display_image: ClosetProcessingImageSnapshot | null;
   thumbnail_image: ClosetProcessingImageSnapshot | null;
 };
@@ -312,6 +319,43 @@ export type ClosetConfirmRequest = {
   expected_review_version: string;
 };
 
+export type ClosetConfirmedItemFieldOperation =
+  | "set_value"
+  | "clear"
+  | "mark_not_applicable";
+
+export type ClosetConfirmedItemFieldChange = {
+  field_name: string;
+  operation: ClosetConfirmedItemFieldOperation;
+  canonical_value?: ClosetFieldCanonicalValue;
+};
+
+export type ClosetConfirmedItemPatchRequest = {
+  expected_item_version: string;
+  changes: ClosetConfirmedItemFieldChange[];
+};
+
+export type ClosetConfirmedItemEditSnapshot = {
+  item_id: string;
+  lifecycle_status: string;
+  processing_status: string;
+  review_status: string;
+  confirmed_at: string;
+  updated_at: string;
+  item_version: string;
+  editable_fields: string[];
+  display_image: ClosetProcessingImageSnapshot | null;
+  thumbnail_image: ClosetProcessingImageSnapshot | null;
+  original_image: ClosetProcessingImageSnapshot | null;
+  original_images: ClosetProcessingImageSnapshot[];
+  metadata_projection: ClosetMetadataProjectionSnapshot;
+  field_states: ClosetFieldStateSnapshot[];
+};
+
+export type ClosetConfirmedItemImageReorderRequest = {
+  image_ids: string[];
+};
+
 export type ClosetRetryStep =
   | "image_processing"
   | "metadata_extraction"
@@ -342,6 +386,7 @@ export type ClosetBrowseFilters = {
   color?: string;
   material?: string;
   pattern?: string;
+  include_archived?: boolean;
 };
 
 export type ClosetQueueSectionKey = "needs_review" | "processing" | "needs_attention";

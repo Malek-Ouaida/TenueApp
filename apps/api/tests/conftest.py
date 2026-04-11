@@ -15,6 +15,7 @@ from app.api.dependencies.closet import (
     get_metadata_extraction_provider,
     get_storage_client,
 )
+from app.api.dependencies.wear import get_wear_detection_provider
 from app.core.storage import InMemoryStorageClient
 from app.db.base import Base
 from app.db.session import get_db_session
@@ -27,6 +28,8 @@ from app.domains.auth.provider import (
 from app.domains.closet.background_removal import BackgroundRemovalResult
 from app.domains.closet.metadata_extraction import MetadataExtractionResult
 from app.domains.closet.models import ProviderResultStatus
+from app.domains.wear.detection import DetectedOutfitItem, OutfitDetectionResult
+from app.domains.wear.models import WearProviderResultStatus
 from app.main import app
 
 engine = create_engine(
@@ -269,6 +272,62 @@ class FakeMetadataExtractionProvider:
         )
 
 
+class FakeWearDetectionProvider:
+    provider_name = "fake_wear_detection"
+
+    def __init__(self) -> None:
+        self.status = WearProviderResultStatus.FAILED
+        self.detections: list[DetectedOutfitItem] = []
+        self.payload: dict[str, Any] = {
+            "reason_code": "provider_disabled",
+            "message": "Wear detection is disabled in tests.",
+        }
+        self.raise_error: Exception | None = None
+
+    def succeed(
+        self,
+        *,
+        detections: list[DetectedOutfitItem],
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self.status = WearProviderResultStatus.SUCCEEDED
+        self.detections = detections
+        self.payload = payload or {"message": "Detected by fake provider."}
+        self.raise_error = None
+
+    def fail(self, *, payload: dict[str, Any] | None = None) -> None:
+        self.status = WearProviderResultStatus.FAILED
+        self.detections = []
+        self.payload = payload or {
+            "reason_code": "provider_failed",
+            "message": "Fake wear detection fallback.",
+        }
+        self.raise_error = None
+
+    def crash(self, exc: Exception) -> None:
+        self.raise_error = exc
+
+    def detect_outfit_items(
+        self,
+        *,
+        image_bytes: bytes,
+        filename: str,
+        mime_type: str,
+    ) -> OutfitDetectionResult:
+        del image_bytes, filename, mime_type
+        if self.raise_error is not None:
+            raise self.raise_error
+
+        return OutfitDetectionResult(
+            provider_name=self.provider_name,
+            provider_model="fake-model",
+            provider_version="test",
+            status=self.status,
+            sanitized_payload=self.payload,
+            detections=self.detections,
+        )
+
+
 @pytest.fixture(autouse=True)
 def reset_database() -> Generator[None, None, None]:
     Base.metadata.drop_all(bind=engine)
@@ -302,6 +361,13 @@ def fake_metadata_extraction_provider() -> FakeMetadataExtractionProvider:
 
 
 @pytest.fixture()
+def fake_wear_detection_provider() -> FakeWearDetectionProvider:
+    provider = FakeWearDetectionProvider()
+    provider.fail()
+    return provider
+
+
+@pytest.fixture()
 def db_session() -> Generator[Session, None, None]:
     session = TestingSessionLocal()
     try:
@@ -316,6 +382,7 @@ def client(
     fake_storage_client: InMemoryStorageClient,
     fake_background_removal_provider: FakeBackgroundRemovalProvider,
     fake_metadata_extraction_provider: FakeMetadataExtractionProvider,
+    fake_wear_detection_provider: FakeWearDetectionProvider,
 ) -> Generator[TestClient, None, None]:
     def override_get_db_session() -> Generator[Session, None, None]:
         session = TestingSessionLocal()
@@ -333,6 +400,7 @@ def client(
     app.dependency_overrides[get_metadata_extraction_provider] = lambda: (
         fake_metadata_extraction_provider
     )
+    app.dependency_overrides[get_wear_detection_provider] = lambda: fake_wear_detection_provider
 
     with TestClient(app) as test_client:
         yield test_client
@@ -345,6 +413,7 @@ def client_without_storage_override(
     fake_auth_provider: FakeAuthProvider,
     fake_background_removal_provider: FakeBackgroundRemovalProvider,
     fake_metadata_extraction_provider: FakeMetadataExtractionProvider,
+    fake_wear_detection_provider: FakeWearDetectionProvider,
 ) -> Generator[TestClient, None, None]:
     def override_get_db_session() -> Generator[Session, None, None]:
         session = TestingSessionLocal()
@@ -361,6 +430,7 @@ def client_without_storage_override(
     app.dependency_overrides[get_metadata_extraction_provider] = lambda: (
         fake_metadata_extraction_provider
     )
+    app.dependency_overrides[get_wear_detection_provider] = lambda: fake_wear_detection_provider
 
     with TestClient(app) as test_client:
         yield test_client

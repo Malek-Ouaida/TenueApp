@@ -786,8 +786,8 @@ def test_normalization_materializes_field_states_and_keeps_projection_confirmed_
     assert "taupe" in (field_candidates[2].conflict_notes or "")
     assert field_candidates[3].normalized_candidate == ["sporty"]
     assert "smart casual" in (field_candidates[3].conflict_notes or "")
-    assert field_candidates[4].normalized_candidate == ["business"]
-    assert "vacation" in (field_candidates[4].conflict_notes or "")
+    assert field_candidates[4].normalized_candidate == ["business", "vacation"]
+    assert field_candidates[4].conflict_notes in {None, ""}
     assert field_candidates[5].normalized_candidate == "COS"
 
     assert set(state_by_field) == {
@@ -799,8 +799,11 @@ def test_normalization_materializes_field_states_and_keeps_projection_confirmed_
         "pattern",
         "brand",
         "style_tags",
+        "fit_tags",
         "occasion_tags",
         "season_tags",
+        "silhouette",
+        "attributes",
     }
     assert state_by_field["category"].source == FieldSource.PROVIDER
     assert state_by_field["category"].review_state == FieldReviewState.PENDING_USER
@@ -832,8 +835,11 @@ def test_normalization_materializes_field_states_and_keeps_projection_confirmed_
         "pattern",
         "brand",
         "style_tags",
+        "fit_tags",
         "occasion_tags",
         "season_tags",
+        "silhouette",
+        "attributes",
     ]
     assert body["current_field_states"][1]["canonical_value"] == "tops"
     assert body["current_field_states"][2]["canonical_value"] == "t-shirt"

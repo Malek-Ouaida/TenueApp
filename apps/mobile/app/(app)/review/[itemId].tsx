@@ -16,6 +16,10 @@ import {
 } from "../../../src/lib/haptics";
 import { ReviewDeckScreen } from "../../../src/closet/ReviewDeckScreen";
 import {
+  fieldIsMultiValue,
+  selectionOptionsForField
+} from "../../../src/closet/reviewDeckShared";
+import {
   buildReviewFieldHelper,
   CLOSET_FIELD_ORDER,
   formatFieldValue,
@@ -30,7 +34,6 @@ import {
 } from "../../../src/closet/status";
 import type {
   ClosetFieldCanonicalValue,
-  ClosetMetadataCategoryOption,
   ClosetReviewFieldChange,
   ClosetReviewFieldSnapshot
 } from "../../../src/closet/types";
@@ -75,47 +78,11 @@ function currentValueLabel(field: ClosetReviewFieldSnapshot) {
   return formatFieldValue(field.current_state.canonical_value) ?? "Unknown";
 }
 
-function selectionOptionsForField(
-  fieldName: string,
-  categories: ClosetMetadataCategoryOption[],
-  metadata: ReturnType<typeof useClosetMetadataOptions>["data"],
-  currentCategory: string | null
-) {
-  if (!metadata) {
-    return [];
-  }
-
-  switch (fieldName) {
-    case "category":
-      return categories.map((entry) => entry.name);
-    case "subcategory": {
-      if (currentCategory) {
-        return categories.find((entry) => entry.name === currentCategory)?.subcategories ?? [];
-      }
-      return categories.flatMap((entry) => entry.subcategories);
-    }
-    case "colors":
-      return metadata.colors;
-    case "material":
-      return metadata.materials;
-    case "pattern":
-      return metadata.patterns;
-    case "style_tags":
-      return metadata.style_tags;
-    case "occasion_tags":
-      return metadata.occasion_tags;
-    case "season_tags":
-      return metadata.season_tags;
-    default:
-      return [];
-  }
-}
-
 export default function ReviewItemScreenRoute() {
   const params = useLocalSearchParams<{ itemId: string | string[] }>();
   const itemId = Array.isArray(params.itemId) ? params.itemId[0] : params.itemId;
   const { session } = useAuth();
-  const reviewQueue = useReviewQueue(session?.access_token, 50);
+  const reviewQueue = useReviewQueue(session?.access_token, 50, { disableCache: true });
   const lastItemIdRef = useRef<string | null>(null);
 
   const reviewableItems = useMemo(
@@ -177,7 +144,6 @@ function LegacyReviewItemScreen({ itemId }: { itemId: string }) {
   const [notice, setNotice] = useState<string | null>(null);
 
   const review = reviewFlow.review;
-  const categories = metadata.data?.categories ?? [];
   const categoryField = review?.review_fields.find((field) => field.field_name === "category") ?? null;
   const currentCategory =
     asString(categoryField?.current_state.canonical_value ?? null) ??
@@ -220,7 +186,7 @@ function LegacyReviewItemScreen({ itemId }: { itemId: string }) {
   }
 
   function openSheet(field: ClosetReviewFieldSnapshot) {
-    const multi = ["colors", "style_tags", "occasion_tags", "season_tags"].includes(field.field_name);
+    const multi = fieldIsMultiValue(field.field_name);
     const selected = multi
       ? asStringArray(field.current_state.canonical_value)
       : [asString(field.current_state.canonical_value) ?? ""].filter(Boolean);
@@ -228,7 +194,7 @@ function LegacyReviewItemScreen({ itemId }: { itemId: string }) {
     setSheet({
       fieldName: field.field_name,
       multi,
-      options: selectionOptionsForField(field.field_name, categories, metadata.data, currentCategory),
+      options: selectionOptionsForField(field.field_name, metadata.data ?? null, currentCategory),
       selected,
       title: field.field_name.replaceAll("_", " ")
     });
@@ -287,7 +253,7 @@ function LegacyReviewItemScreen({ itemId }: { itemId: string }) {
       ? getReviewItemPreview(reviewFlow.processing)
       : null;
   const requiredFields = review
-    ? ["category", "subcategory"]
+    ? ["subcategory"]
         .map((fieldName) => review.review_fields.find((field) => field.field_name === fieldName))
         .filter((field): field is ClosetReviewFieldSnapshot => Boolean(field))
     : [];
@@ -400,6 +366,18 @@ function LegacyReviewItemScreen({ itemId }: { itemId: string }) {
                   Required fields
                 </AppText>
                 <AppText variant="sectionTitle">These are the gate before closet truth.</AppText>
+                {categoryField ? (
+                  <Card tone="soft" style={styles.derivedCategoryCard}>
+                    <AppText color={colors.textSubtle} variant="captionStrong">
+                      Category
+                    </AppText>
+                    <AppText variant="cardTitle">{currentValueLabel(categoryField)}</AppText>
+                    <AppText color={colors.textMuted}>
+                      Change subcategory to move this item into another category. The backend keeps
+                      category and subcategory aligned together.
+                    </AppText>
+                  </Card>
+                ) : null}
                 <View style={styles.fieldStack}>
                   {requiredFields.map((field) => (
                     <ReviewFieldRow
@@ -667,7 +645,7 @@ function ReviewFieldRow({
           disabled={!metadataReady}
         />
         {field.suggested_state ? <ActionPill label="Use suggestion" onPress={onAcceptSuggestion} /> : null}
-        <ActionPill label="Clear" onPress={onClear} />
+        {!field.required ? <ActionPill label="Clear" onPress={onClear} /> : null}
         {!field.required ? <ActionPill label="Not applicable" onPress={onMarkNotApplicable} /> : null}
       </View>
     </View>
@@ -717,6 +695,10 @@ const styles = StyleSheet.create({
   },
   fieldStack: {
     gap: spacing.lg
+  },
+  derivedCategoryCard: {
+    marginBottom: spacing.lg,
+    gap: spacing.xs
   },
   fieldRow: {
     gap: spacing.sm,

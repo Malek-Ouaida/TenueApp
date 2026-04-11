@@ -6,12 +6,15 @@ from typing import Any
 
 from app.domains.closet.models import ApplicabilityState
 from app.domains.closet.taxonomy import (
+    ATTRIBUTES,
     CATEGORY_SUBCATEGORIES,
     COLORS,
+    FIT_TAGS,
     MATERIALS,
     OCCASION_TAGS,
     PATTERNS,
     SEASON_TAGS,
+    SILHOUETTES,
     STYLE_TAGS,
 )
 
@@ -42,8 +45,11 @@ COLOR_LOOKUP = _build_lookup(tuple(COLORS))
 MATERIAL_LOOKUP = _build_lookup(tuple(MATERIALS))
 PATTERN_LOOKUP = _build_lookup(tuple(PATTERNS))
 STYLE_TAG_LOOKUP = _build_lookup(tuple(STYLE_TAGS))
+FIT_TAG_LOOKUP = _build_lookup(tuple(FIT_TAGS))
 OCCASION_TAG_LOOKUP = _build_lookup(tuple(OCCASION_TAGS))
 SEASON_TAG_LOOKUP = _build_lookup(tuple(SEASON_TAGS))
+SILHOUETTE_LOOKUP = _build_lookup(tuple(SILHOUETTES))
+ATTRIBUTE_LOOKUP = _build_lookup(tuple(ATTRIBUTES))
 
 CATEGORY_ALIASES = {
     lookup_key("top"): "tops",
@@ -51,6 +57,9 @@ CATEGORY_ALIASES = {
     lookup_key("shoe"): "shoes",
     lookup_key("bag"): "bags",
     lookup_key("accessory"): "accessories",
+    lookup_key("one piece"): "one_piece",
+    lookup_key("one-piece"): "one_piece",
+    lookup_key("jewellery"): "jewelry",
 }
 
 SUBCATEGORY_ALIASES = {
@@ -58,6 +67,9 @@ SUBCATEGORY_ALIASES = {
     lookup_key("tee-shirt"): "t-shirt",
     lookup_key("tshirt"): "t-shirt",
     lookup_key("tanktop"): "tank top",
+    lookup_key("cami"): "camisole",
+    lookup_key("trench"): "trench coat",
+    lookup_key("tee"): "t-shirt",
 }
 
 COLOR_ALIASES = {
@@ -73,6 +85,8 @@ MATERIAL_ALIASES = {
 
 PATTERN_ALIASES = {
     lookup_key("polka-dot"): "polka dot",
+    lookup_key("checker"): "checkered",
+    lookup_key("checks"): "checkered",
 }
 
 STYLE_TAG_ALIASES = {
@@ -80,12 +94,40 @@ STYLE_TAG_ALIASES = {
     lookup_key("athleisure"): "sporty",
 }
 
+FIT_TAG_ALIASES = {
+    lookup_key("wide leg"): "wide_leg",
+    lookup_key("straight leg"): "straight_leg",
+}
+
 OCCASION_TAG_ALIASES = {
     lookup_key("office"): "business",
     lookup_key("night out"): "evening",
 }
 
-SEASON_TAG_ALIASES: dict[str, str] = {}
+SEASON_TAG_ALIASES = {
+    lookup_key("autumn"): "fall",
+}
+
+SILHOUETTE_ALIASES = {
+    lookup_key("a-line"): "a_line",
+    lookup_key("fit and flare"): "fit_and_flare",
+    lookup_key("wide leg"): "wide_leg",
+}
+
+ATTRIBUTE_ALIASES = {
+    lookup_key("crew neck"): "crew_neck",
+    lookup_key("v neck"): "v_neck",
+    lookup_key("button down"): "button_front",
+    lookup_key("button front"): "button_front",
+    lookup_key("off shoulder"): "off_shoulder",
+    lookup_key("short sleeve"): "short_sleeve",
+    lookup_key("long sleeve"): "long_sleeve",
+    lookup_key("pointed toe"): "pointed_toe",
+    lookup_key("open toe"): "open_toe",
+    lookup_key("stiletto"): "stiletto_heel",
+    lookup_key("block heel"): "block_heel",
+    lookup_key("kitten heel"): "kitten_heel",
+}
 
 
 @dataclass(frozen=True)
@@ -163,6 +205,15 @@ def normalize_field_value(
             lookup=PATTERN_LOOKUP,
             aliases=PATTERN_ALIASES,
         )
+    if field_name == "silhouette":
+        return _normalize_controlled_scalar(
+            field_name=field_name,
+            raw_value=raw_value,
+            confidence=confidence,
+            label="silhouette",
+            lookup=SILHOUETTE_LOOKUP,
+            aliases=SILHOUETTE_ALIASES,
+        )
     if field_name == "colors":
         return _normalize_controlled_list(
             field_name=field_name,
@@ -181,6 +232,15 @@ def normalize_field_value(
             lookup=STYLE_TAG_LOOKUP,
             aliases=STYLE_TAG_ALIASES,
         )
+    if field_name == "fit_tags":
+        return _normalize_controlled_list(
+            field_name=field_name,
+            raw_value=raw_value,
+            confidence=confidence,
+            label="fit tag",
+            lookup=FIT_TAG_LOOKUP,
+            aliases=FIT_TAG_ALIASES,
+        )
     if field_name == "occasion_tags":
         return _normalize_controlled_list(
             field_name=field_name,
@@ -198,6 +258,15 @@ def normalize_field_value(
             label="season tag",
             lookup=SEASON_TAG_LOOKUP,
             aliases=SEASON_TAG_ALIASES,
+        )
+    if field_name == "attributes":
+        return _normalize_controlled_list(
+            field_name=field_name,
+            raw_value=raw_value,
+            confidence=confidence,
+            label="attribute",
+            lookup=ATTRIBUTE_LOOKUP,
+            aliases=ATTRIBUTE_ALIASES,
         )
 
     return NormalizedFieldValue(

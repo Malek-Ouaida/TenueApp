@@ -5,32 +5,31 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.api.dependencies.auth import CurrentUser
-from app.api.dependencies.wear import get_wear_service
-from app.api.schemas.closet import ClosetProcessingImageSnapshot
+from app.api.dependencies.wear import (
+    get_wear_processing_service,
+    get_wear_review_service,
+    get_wear_service,
+    get_wear_upload_service,
+)
+from app.api.schemas.closet import PresignedUploadDescriptor
 from app.api.schemas.wear import (
     ManualWearLogCreateRequest,
     SavedOutfitWearLogCreateRequest,
-    WearCalendarDaySnapshot,
     WearCalendarResponse,
-    WearLinkedOutfitSnapshot,
+    WearLogConfirmRequest,
     WearLogCreateRequest,
     WearLogDetailSnapshot,
-    WearLoggedItemSnapshot,
     WearLogTimelineItemSnapshot,
     WearLogTimelineResponse,
     WearLogUpdateRequest,
+    WearUploadCompleteRequest,
+    WearUploadIntentRequest,
+    WearUploadIntentResponse,
 )
-from app.domains.closet.image_processing_service import ProcessingSnapshotImage
-from app.domains.wear.service import (
-    InvalidWearHistoryCursorError,
-    WearService,
-    WearServiceError,
-)
-from app.domains.wear.service import WearCalendarDaySnapshot as WearCalendarDayView
-from app.domains.wear.service import WearLinkedOutfitSnapshot as WearLinkedOutfitView
-from app.domains.wear.service import WearLogDetailSnapshot as WearLogDetailView
-from app.domains.wear.service import WearLoggedItemSnapshot as WearLoggedItemView
-from app.domains.wear.service import WearLogTimelineItemSnapshot as WearLogTimelineItemView
+from app.domains.wear.processing_service import WearProcessingError, WearProcessingService
+from app.domains.wear.review_service import WearReviewService
+from app.domains.wear.service import InvalidWearHistoryCursorError, WearService, WearServiceError
+from app.domains.wear.upload_service import WearUploadError, WearUploadService
 
 router = APIRouter(prefix="/wear-logs", tags=["wear-logs"])
 
@@ -45,8 +44,12 @@ def create_wear_log(
         snapshot = wear_service.create_wear_log(
             user_id=current_user.id,
             wear_date=payload.wear_date,
+            worn_at=getattr(payload, "worn_at", None),
+            captured_at=getattr(payload, "captured_at", None),
+            timezone_name=getattr(payload, "timezone_name", None),
             mode=payload.mode,
             context=payload.context,
+            vibe=getattr(payload, "vibe", None),
             notes=payload.notes,
             items=_build_create_items(payload),
             outfit_id=_build_outfit_id(payload),
@@ -54,7 +57,7 @@ def create_wear_log(
     except WearServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
-    return build_wear_log_detail_snapshot(snapshot)
+    return WearLogDetailSnapshot.model_validate(snapshot, from_attributes=True)
 
 
 @router.get("", response_model=WearLogTimelineResponse)
@@ -63,12 +66,18 @@ def read_wear_logs(
     wear_service: Annotated[WearService, Depends(get_wear_service)],
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    wear_date: date | None = None,
+    status: str | None = None,
+    include_archived: bool = False,
 ) -> WearLogTimelineResponse:
     try:
         items, next_cursor = wear_service.list_wear_logs(
             user_id=current_user.id,
             cursor=cursor,
             limit=limit,
+            wear_date=wear_date,
+            status=status,
+            include_archived=include_archived,
         )
     except InvalidWearHistoryCursorError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -76,7 +85,10 @@ def read_wear_logs(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     return WearLogTimelineResponse(
-        items=[build_wear_log_timeline_item_snapshot(item) for item in items],
+        items=[
+            WearLogTimelineItemSnapshot.model_validate(item, from_attributes=True)
+            for item in items
+        ],
         next_cursor=next_cursor,
     )
 
@@ -99,7 +111,7 @@ def read_wear_calendar(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return WearCalendarResponse(days=[build_wear_calendar_day_snapshot(day) for day in days])
+    return WearCalendarResponse.model_validate({"days": days}, from_attributes=True)
 
 
 @router.get("/{wear_log_id}", response_model=WearLogDetailSnapshot)
@@ -116,7 +128,7 @@ def read_wear_log_detail(
     except WearServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
-    return build_wear_log_detail_snapshot(snapshot)
+    return WearLogDetailSnapshot.model_validate(snapshot, from_attributes=True)
 
 
 @router.patch("/{wear_log_id}", response_model=WearLogDetailSnapshot)
@@ -131,7 +143,11 @@ def update_wear_log(
             wear_log_id=wear_log_id,
             user_id=current_user.id,
             wear_date=payload.wear_date,
+            worn_at=payload.worn_at,
+            captured_at=payload.captured_at,
+            timezone_name=payload.timezone_name,
             context=payload.context,
+            vibe=payload.vibe,
             notes=payload.notes,
             items=(
                 [
@@ -139,6 +155,9 @@ def update_wear_log(
                         "closet_item_id": item.closet_item_id,
                         "role": item.role,
                         "sort_index": item.sort_index,
+                        "detected_item_id": item.detected_item_id,
+                        "source": item.source,
+                        "match_confidence": item.match_confidence,
                     }
                     for item in payload.items
                 ]
@@ -150,7 +169,121 @@ def update_wear_log(
     except WearServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
-    return build_wear_log_detail_snapshot(snapshot)
+    return WearLogDetailSnapshot.model_validate(snapshot, from_attributes=True)
+
+
+@router.post("/{wear_log_id}/photos/upload-intents", response_model=WearUploadIntentResponse)
+def create_wear_log_upload_intent(
+    wear_log_id: UUID,
+    payload: WearUploadIntentRequest,
+    current_user: CurrentUser,
+    upload_service: Annotated[WearUploadService, Depends(get_wear_upload_service)],
+) -> WearUploadIntentResponse:
+    try:
+        result = upload_service.create_upload_intent(
+            wear_log_id=wear_log_id,
+            user_id=current_user.id,
+            filename=payload.filename,
+            mime_type=payload.mime_type,
+            file_size=payload.file_size,
+            sha256=payload.sha256,
+        )
+    except WearUploadError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    return WearUploadIntentResponse(
+        upload_intent_id=result.upload_intent_id,
+        expires_at=result.presigned_upload.expires_at,
+        upload=PresignedUploadDescriptor(
+            method=result.presigned_upload.method,
+            url=result.presigned_upload.url,
+            headers=result.presigned_upload.headers,
+        ),
+    )
+
+
+@router.post("/{wear_log_id}/photos/uploads/complete", response_model=WearLogDetailSnapshot)
+def complete_wear_log_upload(
+    wear_log_id: UUID,
+    payload: WearUploadCompleteRequest,
+    current_user: CurrentUser,
+    upload_service: Annotated[WearUploadService, Depends(get_wear_upload_service)],
+) -> WearLogDetailSnapshot:
+    try:
+        snapshot = upload_service.complete_upload(
+            wear_log_id=wear_log_id,
+            user_id=current_user.id,
+            upload_intent_id=payload.upload_intent_id,
+        )
+    except WearUploadError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except WearServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    return WearLogDetailSnapshot.model_validate(snapshot, from_attributes=True)
+
+
+@router.post("/{wear_log_id}/confirm", response_model=WearLogDetailSnapshot)
+def confirm_wear_log(
+    wear_log_id: UUID,
+    payload: WearLogConfirmRequest,
+    current_user: CurrentUser,
+    review_service: Annotated[WearReviewService, Depends(get_wear_review_service)],
+) -> WearLogDetailSnapshot:
+    try:
+        snapshot = review_service.confirm_wear_log(
+            wear_log_id=wear_log_id,
+            user_id=current_user.id,
+            expected_review_version=payload.expected_review_version,
+            worn_at=payload.worn_at,
+            captured_at=payload.captured_at,
+            timezone_name=payload.timezone_name,
+            context=payload.context,
+            vibe=payload.vibe,
+            notes=payload.notes,
+            items=[
+                {
+                    "closet_item_id": item.closet_item_id,
+                    "role": item.role,
+                    "sort_index": item.sort_index,
+                    "detected_item_id": item.detected_item_id,
+                    "source": item.source,
+                    "match_confidence": item.match_confidence,
+                }
+                for item in payload.items
+            ],
+            resolved_detected_items=[
+                {
+                    "detected_item_id": item.detected_item_id,
+                    "status": item.status,
+                    "exclusion_reason": item.exclusion_reason,
+                }
+                for item in payload.resolved_detected_items
+            ],
+        )
+    except WearServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    return WearLogDetailSnapshot.model_validate(snapshot, from_attributes=True)
+
+
+@router.post("/{wear_log_id}/reprocess", response_model=WearLogDetailSnapshot, status_code=202)
+def reprocess_wear_log(
+    wear_log_id: UUID,
+    current_user: CurrentUser,
+    response: Response,
+    processing_service: Annotated[WearProcessingService, Depends(get_wear_processing_service)],
+) -> WearLogDetailSnapshot:
+    try:
+        snapshot, status_code = processing_service.reprocess_wear_log(
+            wear_log_id=wear_log_id,
+            user_id=current_user.id,
+        )
+    except WearProcessingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    response.status_code = status_code
+    return WearLogDetailSnapshot.model_validate(snapshot, from_attributes=True)
 
 
 @router.delete("/{wear_log_id}", status_code=204)
@@ -170,110 +303,16 @@ def delete_wear_log(
     return Response(status_code=204)
 
 
-def build_wear_log_detail_snapshot(snapshot: WearLogDetailView) -> WearLogDetailSnapshot:
-    return WearLogDetailSnapshot(
-        id=snapshot.id,
-        wear_date=snapshot.wear_date,
-        source=snapshot.source,
-        context=snapshot.context,
-        notes=snapshot.notes,
-        is_confirmed=snapshot.is_confirmed,
-        item_count=snapshot.item_count,
-        cover_image=build_image_snapshot(snapshot.cover_image),
-        linked_outfit=build_linked_outfit_snapshot(snapshot.linked_outfit),
-        items=[build_logged_item_snapshot(item) for item in snapshot.items],
-        created_at=snapshot.created_at,
-        updated_at=snapshot.updated_at,
-    )
-
-
-def build_linked_outfit_snapshot(
-    snapshot: WearLinkedOutfitView | None,
-) -> WearLinkedOutfitSnapshot | None:
-    if snapshot is None:
-        return None
-    return WearLinkedOutfitSnapshot(
-        id=snapshot.id,
-        title=snapshot.title,
-        is_favorite=snapshot.is_favorite,
-        is_archived=snapshot.is_archived,
-    )
-
-
-def build_logged_item_snapshot(snapshot: WearLoggedItemView) -> WearLoggedItemSnapshot:
-    return WearLoggedItemSnapshot(
-        closet_item_id=snapshot.closet_item_id,
-        title=snapshot.title,
-        category=snapshot.category,
-        subcategory=snapshot.subcategory,
-        primary_color=snapshot.primary_color,
-        display_image=build_image_snapshot(snapshot.display_image),
-        thumbnail_image=build_image_snapshot(snapshot.thumbnail_image),
-        role=snapshot.role,
-        sort_index=snapshot.sort_index,
-    )
-
-
-def build_wear_log_timeline_item_snapshot(
-    snapshot: WearLogTimelineItemView,
-) -> WearLogTimelineItemSnapshot:
-    return WearLogTimelineItemSnapshot(
-        id=snapshot.id,
-        wear_date=snapshot.wear_date,
-        context=snapshot.context,
-        item_count=snapshot.item_count,
-        source=snapshot.source,
-        is_confirmed=snapshot.is_confirmed,
-        cover_image=build_image_snapshot(snapshot.cover_image),
-        outfit_title=snapshot.outfit_title,
-        created_at=snapshot.created_at,
-        updated_at=snapshot.updated_at,
-    )
-
-
-def build_wear_calendar_day_snapshot(
-    snapshot: WearCalendarDayView,
-) -> WearCalendarDaySnapshot:
-    return WearCalendarDaySnapshot(
-        date=snapshot.date,
-        has_wear_log=snapshot.has_wear_log,
-        wear_log_id=snapshot.wear_log_id,
-        item_count=snapshot.item_count,
-        source=snapshot.source,
-        is_confirmed=snapshot.is_confirmed,
-        cover_image=build_image_snapshot(snapshot.cover_image),
-        outfit_title=snapshot.outfit_title,
-    )
-
-
-def build_image_snapshot(
-    snapshot: ProcessingSnapshotImage | None,
-) -> ClosetProcessingImageSnapshot | None:
-    if snapshot is None:
-        return None
-    return ClosetProcessingImageSnapshot(
-        asset_id=snapshot.asset_id,
-        image_id=snapshot.image_id,
-        role=snapshot.role,
-        position=snapshot.position,
-        is_primary=snapshot.is_primary,
-        mime_type=snapshot.mime_type,
-        width=snapshot.width,
-        height=snapshot.height,
-        url=snapshot.url,
-        expires_at=snapshot.expires_at,
-    )
-
-
-def _build_create_items(
-    payload: WearLogCreateRequest,
-) -> list[dict[str, object]] | None:
+def _build_create_items(payload: WearLogCreateRequest) -> list[dict[str, object]] | None:
     if isinstance(payload, ManualWearLogCreateRequest):
         return [
             {
                 "closet_item_id": item.closet_item_id,
                 "role": item.role,
                 "sort_index": item.sort_index,
+                "detected_item_id": item.detected_item_id,
+                "source": item.source,
+                "match_confidence": item.match_confidence,
             }
             for item in payload.items
         ]
@@ -290,4 +329,4 @@ def _parse_date(value: str, *, field_name: str) -> date:
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
-        raise ValueError(f"{field_name} must be a valid ISO date.") from exc
+        raise ValueError(f"{field_name} must be a valid ISO-8601 date.") from exc

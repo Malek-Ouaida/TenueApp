@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from app.api.dependencies.auth import CurrentUser
 from app.api.dependencies.closet import (
     get_closet_browse_service,
+    get_closet_confirmed_item_media_service,
+    get_closet_confirmed_item_service,
     get_closet_image_processing_service,
     get_closet_lifecycle_service,
     get_closet_metadata_extraction_service,
@@ -17,6 +19,9 @@ from app.api.dependencies.closet import (
 from app.api.schemas.closet import (
     ClosetBrowseListItemSnapshot,
     ClosetBrowseListResponse,
+    ClosetConfirmedItemEditSnapshot,
+    ClosetConfirmedItemImageReorderRequest,
+    ClosetConfirmedItemPatchRequest,
     ClosetConfirmRequest,
     ClosetDraftCreateRequest,
     ClosetDraftSnapshot,
@@ -55,6 +60,11 @@ from app.domains.closet.browse_service import (
     ClosetBrowseService,
     InvalidBrowseCursorError,
     InvalidBrowseFilterError,
+)
+from app.domains.closet.confirmed_item_media_service import ConfirmedClosetItemMediaService
+from app.domains.closet.confirmed_item_service import (
+    ConfirmedClosetItemService,
+    ConfirmedItemEditSnapshot,
 )
 from app.domains.closet.errors import ClosetDomainError
 from app.domains.closet.image_processing_service import (
@@ -199,7 +209,7 @@ def read_review_queue(
             limit=limit,
         )
     except InvalidReviewCursorError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise _http_message_error(status_code=422, code="invalid_review_cursor", message=str(exc)) from exc
 
     return ClosetReviewListResponse(
         items=[
@@ -225,6 +235,7 @@ def read_confirmed_items(
     color: str | None = None,
     material: str | None = None,
     pattern: str | None = None,
+    include_archived: bool = False,
 ) -> ClosetBrowseListResponse:
     try:
         items, next_cursor = browse_service.list_confirmed_items(
@@ -237,9 +248,10 @@ def read_confirmed_items(
             color=color,
             material=material,
             pattern=pattern,
+            include_archived=include_archived,
         )
     except (InvalidBrowseCursorError, InvalidBrowseFilterError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise _http_message_error(status_code=422, code="invalid_browse_request", message=str(exc)) from exc
 
     return ClosetBrowseListResponse(
         items=[build_browse_list_item_snapshot(item) for item in items],
@@ -267,16 +279,37 @@ def read_confirmed_item_detail(
     item_id: UUID,
     current_user: CurrentUser,
     browse_service: Annotated[ClosetBrowseService, Depends(get_closet_browse_service)],
+    include_archived: bool = False,
 ) -> ClosetItemDetailSnapshot:
     try:
         snapshot = browse_service.get_confirmed_item_detail(
+            item_id=item_id,
+            user_id=current_user.id,
+            include_archived=include_archived,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_item_detail_snapshot(snapshot)
+
+
+@router.get("/items/{item_id}/edit", response_model=ClosetConfirmedItemEditSnapshot)
+def read_confirmed_item_edit(
+    item_id: UUID,
+    current_user: CurrentUser,
+    confirmed_item_service: Annotated[
+        ConfirmedClosetItemService, Depends(get_closet_confirmed_item_service)
+    ],
+) -> ClosetConfirmedItemEditSnapshot:
+    try:
+        snapshot = confirmed_item_service.get_edit_snapshot(
             item_id=item_id,
             user_id=current_user.id,
         )
     except ClosetDomainError as exc:
         raise _http_error(exc) from exc
 
-    return build_item_detail_snapshot(snapshot)
+    return build_confirmed_item_edit_snapshot(snapshot)
 
 
 @router.get("/items/{item_id}/history", response_model=ClosetHistoryResponse)
@@ -295,7 +328,7 @@ def read_item_history(
             limit=limit,
         )
     except InvalidHistoryCursorError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise _http_message_error(status_code=422, code="invalid_history_cursor", message=str(exc)) from exc
     except ClosetDomainError as exc:
         raise _http_error(exc) from exc
 
@@ -451,6 +484,43 @@ def patch_item_review(
     return build_review_snapshot(snapshot)
 
 
+@router.patch("/items/{item_id}/review", response_model=ClosetItemReviewSnapshot)
+def patch_item_review_canonical(
+    item_id: UUID,
+    payload: ClosetReviewPatchRequest,
+    current_user: CurrentUser,
+    review_service: Annotated[ClosetReviewService, Depends(get_closet_review_service)],
+) -> ClosetItemReviewSnapshot:
+    return patch_item_review(
+        item_id=item_id,
+        payload=payload,
+        current_user=current_user,
+        review_service=review_service,
+    )
+
+
+@router.patch("/items/{item_id}/edit", response_model=ClosetConfirmedItemEditSnapshot)
+def patch_confirmed_item(
+    item_id: UUID,
+    payload: ClosetConfirmedItemPatchRequest,
+    current_user: CurrentUser,
+    confirmed_item_service: Annotated[
+        ConfirmedClosetItemService, Depends(get_closet_confirmed_item_service)
+    ],
+) -> ClosetConfirmedItemEditSnapshot:
+    try:
+        snapshot = confirmed_item_service.patch_item(
+            item_id=item_id,
+            user_id=current_user.id,
+            expected_item_version=payload.expected_item_version,
+            changes=[change.model_dump() for change in payload.changes],
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_confirmed_item_edit_snapshot(snapshot)
+
+
 @router.post("/items/{item_id}/confirm", response_model=ClosetItemReviewSnapshot)
 def confirm_item_review(
     item_id: UUID,
@@ -482,6 +552,136 @@ def archive_item(
         raise _http_error(exc) from exc
 
     return Response(status_code=204)
+
+
+@router.post("/items/{item_id}/restore", status_code=204)
+def restore_item(
+    item_id: UUID,
+    current_user: CurrentUser,
+    lifecycle_service: Annotated[ClosetLifecycleService, Depends(get_closet_lifecycle_service)],
+) -> Response:
+    try:
+        lifecycle_service.restore_item(item_id=item_id, user_id=current_user.id)
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return Response(status_code=204)
+
+
+@router.post("/items/{item_id}/images/upload-intents", response_model=ClosetUploadIntentResponse)
+def create_confirmed_item_upload_intent(
+    item_id: UUID,
+    payload: ClosetUploadIntentRequest,
+    current_user: CurrentUser,
+    media_service: Annotated[
+        ConfirmedClosetItemMediaService, Depends(get_closet_confirmed_item_media_service)
+    ],
+) -> ClosetUploadIntentResponse:
+    try:
+        result = media_service.create_upload_intent(
+            item_id=item_id,
+            user_id=current_user.id,
+            filename=payload.filename,
+            mime_type=payload.mime_type,
+            file_size=payload.file_size,
+            sha256=payload.sha256,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return ClosetUploadIntentResponse(
+        upload_intent_id=result.upload_intent.id,
+        expires_at=result.presigned_upload.expires_at,
+        upload=PresignedUploadDescriptor(
+            method=result.presigned_upload.method,
+            url=result.presigned_upload.url,
+            headers=result.presigned_upload.headers,
+        ),
+    )
+
+
+@router.post("/items/{item_id}/images/uploads/complete", response_model=ClosetItemDetailSnapshot)
+def complete_confirmed_item_upload(
+    item_id: UUID,
+    payload: ClosetUploadCompleteRequest,
+    current_user: CurrentUser,
+    media_service: Annotated[
+        ConfirmedClosetItemMediaService, Depends(get_closet_confirmed_item_media_service)
+    ],
+) -> ClosetItemDetailSnapshot:
+    try:
+        snapshot = media_service.complete_upload(
+            item_id=item_id,
+            user_id=current_user.id,
+            upload_intent_id=payload.upload_intent_id,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_item_detail_snapshot(snapshot)
+
+
+@router.post("/items/{item_id}/images/reorder", response_model=ClosetItemDetailSnapshot)
+def reorder_confirmed_item_images(
+    item_id: UUID,
+    payload: ClosetConfirmedItemImageReorderRequest,
+    current_user: CurrentUser,
+    media_service: Annotated[
+        ConfirmedClosetItemMediaService, Depends(get_closet_confirmed_item_media_service)
+    ],
+) -> ClosetItemDetailSnapshot:
+    try:
+        snapshot = media_service.reorder_images(
+            item_id=item_id,
+            user_id=current_user.id,
+            image_ids=payload.image_ids,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_item_detail_snapshot(snapshot)
+
+
+@router.post("/items/{item_id}/images/{image_id}/primary", response_model=ClosetItemDetailSnapshot)
+def set_confirmed_item_primary_image(
+    item_id: UUID,
+    image_id: UUID,
+    current_user: CurrentUser,
+    media_service: Annotated[
+        ConfirmedClosetItemMediaService, Depends(get_closet_confirmed_item_media_service)
+    ],
+) -> ClosetItemDetailSnapshot:
+    try:
+        snapshot = media_service.set_primary_image(
+            item_id=item_id,
+            user_id=current_user.id,
+            image_id=image_id,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_item_detail_snapshot(snapshot)
+
+
+@router.delete("/items/{item_id}/images/{image_id}", response_model=ClosetItemDetailSnapshot)
+def remove_confirmed_item_image(
+    item_id: UUID,
+    image_id: UUID,
+    current_user: CurrentUser,
+    media_service: Annotated[
+        ConfirmedClosetItemMediaService, Depends(get_closet_confirmed_item_media_service)
+    ],
+) -> ClosetItemDetailSnapshot:
+    try:
+        snapshot = media_service.remove_image(
+            item_id=item_id,
+            user_id=current_user.id,
+            image_id=image_id,
+        )
+    except ClosetDomainError as exc:
+        raise _http_error(exc) from exc
+
+    return build_item_detail_snapshot(snapshot)
 
 
 @router.post("/items/{item_id}/retry", response_model=ClosetItemReviewSnapshot, status_code=202)
@@ -686,8 +886,11 @@ def _build_metadata_projection_payload(
         pattern=getattr(projection, "pattern"),
         brand=getattr(projection, "brand"),
         style_tags=getattr(projection, "style_tags"),
+        fit_tags=getattr(projection, "fit_tags"),
         occasion_tags=getattr(projection, "occasion_tags"),
         season_tags=getattr(projection, "season_tags"),
+        silhouette=getattr(projection, "silhouette"),
+        attributes=getattr(projection, "attributes"),
         confirmed_at=getattr(projection, "confirmed_at"),
         updated_at=getattr(projection, "updated_at"),
     )
@@ -790,6 +993,33 @@ def build_item_detail_snapshot(snapshot: BrowseDetailSnapshot) -> ClosetItemDeta
         field_states=[
             _build_field_state_payload(field_state)
             for field_state in getattr(snapshot, "field_states")
+        ],
+    )
+
+
+def build_confirmed_item_edit_snapshot(
+    snapshot: ConfirmedItemEditSnapshot,
+) -> ClosetConfirmedItemEditSnapshot:
+    detail = getattr(snapshot, "detail")
+    return ClosetConfirmedItemEditSnapshot(
+        item_id=getattr(snapshot, "item_id"),
+        lifecycle_status=getattr(snapshot, "lifecycle_status"),
+        processing_status=getattr(snapshot, "processing_status"),
+        review_status=getattr(snapshot, "review_status"),
+        confirmed_at=getattr(snapshot, "confirmed_at"),
+        updated_at=getattr(snapshot, "updated_at"),
+        item_version=getattr(snapshot, "item_version"),
+        editable_fields=list(getattr(snapshot, "editable_fields")),
+        display_image=_build_image_payload(getattr(detail, "display_image")),
+        thumbnail_image=_build_image_payload(getattr(detail, "thumbnail_image")),
+        original_image=_build_image_payload(getattr(detail, "original_image")),
+        original_images=_build_image_payloads(getattr(detail, "original_images")),
+        metadata_projection=_build_metadata_projection_payload(
+            getattr(detail, "metadata_projection")
+        ),
+        field_states=[
+            _build_field_state_payload(field_state)
+            for field_state in getattr(detail, "field_states")
         ],
     )
 
@@ -920,6 +1150,13 @@ def _http_error(exc: ClosetDomainError) -> HTTPException:
     return HTTPException(
         status_code=exc.status_code,
         detail={"code": exc.code, "message": exc.detail},
+    )
+
+
+def _http_message_error(*, status_code: int, code: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": code, "message": message},
     )
 
 

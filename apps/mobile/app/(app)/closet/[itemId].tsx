@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { router, useLocalSearchParams, type Href } from "expo-router";
-import { useMemo, useState } from "react";
+import { router, useFocusEffect, useLocalSearchParams, type Href } from "expo-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   PanResponder,
   Pressable,
@@ -69,23 +69,35 @@ function buildFieldRows(detail: NonNullable<ReturnType<typeof useClosetItemDetai
     { label: "Category", value: projection.category ? humanizeEnum(projection.category) : null },
     { label: "Type", value: projection.subcategory ? humanizeEnum(projection.subcategory) : null },
     { label: "Color", value: projection.primary_color ? humanizeEnum(projection.primary_color) : null },
+    {
+      label: "Additional Colors",
+      value: compactList(projection.secondary_colors?.map(humanizeEnum) ?? null)
+    },
     { label: "Material", value: projection.material ? humanizeEnum(projection.material) : null },
+    { label: "Pattern", value: projection.pattern ? humanizeEnum(projection.pattern) : null },
     { label: "Season", value: compactList(projection.season_tags?.map(humanizeEnum) ?? null) },
     { label: "Occasion", value: compactList(projection.occasion_tags?.map(humanizeEnum) ?? null) },
+    { label: "Style", value: compactList(projection.style_tags?.map(humanizeEnum) ?? null) },
+    { label: "Fit", value: compactList(projection.fit_tags?.map(humanizeEnum) ?? null) },
+    { label: "Silhouette", value: projection.silhouette ? humanizeEnum(projection.silhouette) : null },
+    { label: "Attributes", value: compactList(projection.attributes?.map(humanizeEnum) ?? null) },
     { label: "Brand", value: projection.brand ?? null }
   ].filter((field): field is { label: string; value: string } => Boolean(field.value));
 }
 
 export default function ClosetItemDetailScreen() {
-  const params = useLocalSearchParams<{ itemId: string | string[] }>();
+  const params = useLocalSearchParams<{ itemId: string | string[]; archived?: string | string[] }>();
   const itemId = Array.isArray(params.itemId) ? params.itemId[0] : params.itemId;
+  const archivedParam = Array.isArray(params.archived) ? params.archived[0] : params.archived;
+  const includeArchived = archivedParam === "1";
   const { session } = useAuth();
-  const browse = useConfirmedClosetBrowse(session?.access_token, {}, 50);
-  const detail = useClosetItemDetail(session?.access_token, itemId);
+  const browse = useConfirmedClosetBrowse(session?.access_token, { include_archived: includeArchived }, 50);
+  const detail = useClosetItemDetail(session?.access_token, itemId, { includeArchived });
   const usageIndex = useClosetItemUsageIndex(session?.access_token);
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedField, setSelectedField] = useState<{ label: string; value: string } | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [offsetX, setOffsetX] = useState(0);
 
   const orderedItems = browse.items;
@@ -97,6 +109,34 @@ export default function ClosetItemDetailScreen() {
   const nextItem = currentIndex < orderedItems.length - 1 ? orderedItems[currentIndex + 1] : null;
   const usage = itemId ? usageIndex.snapshot.byItemId[itemId] : null;
 
+  useFocusEffect(
+    useCallback(() => {
+      void detail.refresh();
+    }, [detail.refresh])
+  );
+
+  useEffect(() => {
+    const preferredAssetId =
+      detail.detail?.original_images.find((image) => image.is_primary)?.asset_id ??
+      detail.detail?.original_images[0]?.asset_id ??
+      null;
+    if (!detail.detail || selectedAssetId === preferredAssetId) {
+      return;
+    }
+
+    if (selectedAssetId && detail.detail.original_images.some((image) => image.asset_id === selectedAssetId)) {
+      return;
+    }
+
+    setSelectedAssetId(preferredAssetId);
+  }, [detail.detail, selectedAssetId]);
+
+  function buildItemHref(targetItemId: string) {
+    return includeArchived
+      ? ({ pathname: "/closet/[itemId]", params: { itemId: targetItemId, archived: "1" } } as Href)
+      : (`/closet/${targetItemId}` as Href);
+  }
+
   async function archiveItem() {
     const archived = await detail.archive();
     if (archived) {
@@ -107,6 +147,18 @@ export default function ClosetItemDetailScreen() {
 
     await triggerErrorHaptic();
     setActionMessage(detail.error ?? "Archive failed.");
+  }
+
+  async function restoreItem() {
+    const restored = await detail.restore();
+    if (restored) {
+      await triggerSuccessHaptic();
+      router.replace(`/closet/${itemId}` as Href);
+      return;
+    }
+
+    await triggerErrorHaptic();
+    setActionMessage(detail.error ?? "Restore failed.");
   }
 
   const panResponder = useMemo(
@@ -134,10 +186,10 @@ export default function ClosetItemDetailScreen() {
 
           if (gesture.dx < -threshold && nextItem) {
             await triggerSelectionHaptic();
-            router.replace(`/closet/${nextItem.item_id}` as Href);
+            router.replace(buildItemHref(nextItem.item_id));
           } else if (gesture.dx > threshold && previousItem) {
             await triggerSelectionHaptic();
-            router.replace(`/closet/${previousItem.item_id}` as Href);
+            router.replace(buildItemHref(previousItem.item_id));
           }
 
           setOffsetX(0);
@@ -169,7 +221,10 @@ export default function ClosetItemDetailScreen() {
     );
   }
 
+  const selectedOriginalImage =
+    detail.detail.original_images.find((image) => image.asset_id === selectedAssetId) ?? null;
   const heroImage =
+    selectedOriginalImage?.url ??
     detail.detail.display_image?.url ??
     detail.detail.thumbnail_image?.url ??
     detail.detail.original_image?.url;
@@ -190,7 +245,7 @@ export default function ClosetItemDetailScreen() {
       <View style={styles.screen}>
         <View style={styles.floatingHeader}>
           <Pressable
-            onPress={() => router.replace("/closet" as Href)}
+            onPress={() => router.back()}
             style={({ pressed }) => [styles.floatingButton, pressed ? styles.pressed : null]}
           >
             <Feather color={palette.darkText} name="arrow-left" size={20} />
@@ -243,6 +298,52 @@ export default function ClosetItemDetailScreen() {
               {metaLine}
             </AppText>
           </View>
+
+          {detail.detail.lifecycle_status === "archived" ? (
+            <View style={styles.statusCard}>
+              <AppText color={palette.darkText} style={styles.statusTitle}>
+                Archived item
+              </AppText>
+              <AppText color={palette.warmGray} style={styles.statusBody}>
+                This item is hidden from the default closet view until you restore it.
+              </AppText>
+            </View>
+          ) : ["pending", "running", "completed_with_issues"].includes(detail.detail.processing_status) ? (
+            <View style={styles.statusCard}>
+              <AppText color={palette.darkText} style={styles.statusTitle}>
+                Media refresh in progress
+              </AppText>
+              <AppText color={palette.warmGray} style={styles.statusBody}>
+                Tenue is updating processed imagery and metadata after the latest media change.
+              </AppText>
+            </View>
+          ) : null}
+
+          {detail.detail.original_images.length > 1 ? (
+            <ScrollView
+              horizontal
+              contentContainerStyle={styles.imageStrip}
+              showsHorizontalScrollIndicator={false}
+            >
+              {detail.detail.original_images.map((image) => {
+                const active = image.asset_id === selectedAssetId;
+
+                return (
+                  <Pressable
+                    key={image.asset_id}
+                    onPress={() => setSelectedAssetId(image.asset_id)}
+                    style={({ pressed }) => [
+                      styles.imageThumbShell,
+                      active ? styles.imageThumbShellActive : null,
+                      pressed ? styles.pressed : null
+                    ]}
+                  >
+                    <Image contentFit="cover" source={{ uri: image.url }} style={styles.imageThumb} />
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          ) : null}
 
           <SectionLabel label="Details" />
           <View style={styles.sectionCard}>
@@ -323,58 +424,70 @@ export default function ClosetItemDetailScreen() {
             )}
           </View>
 
-          <View style={styles.quickLinkRow}>
-            <Pressable
-              onPress={() => router.push(`/closet/${itemId}/similar` as Href)}
-              style={({ pressed }) => [styles.quickLinkButton, pressed ? styles.pressed : null]}
-            >
-              <AppText color={palette.darkText} style={styles.quickLinkLabel}>
-                Similar Items
-              </AppText>
-            </Pressable>
-            <Pressable
-              onPress={() => router.push(`/closet/${itemId}/history` as Href)}
-              style={({ pressed }) => [styles.quickLinkButton, pressed ? styles.pressed : null]}
-            >
-              <AppText color={palette.darkText} style={styles.quickLinkLabel}>
-                History
-              </AppText>
-            </Pressable>
-          </View>
+          {detail.detail.lifecycle_status !== "archived" ? (
+            <View style={styles.quickLinkRow}>
+              <Pressable
+                onPress={() => router.push(`/closet/${itemId}/similar` as Href)}
+                style={({ pressed }) => [styles.quickLinkButton, pressed ? styles.pressed : null]}
+              >
+                <AppText color={palette.darkText} style={styles.quickLinkLabel}>
+                  Similar Items
+                </AppText>
+              </Pressable>
+              <Pressable
+                onPress={() => router.push(`/closet/${itemId}/history` as Href)}
+                style={({ pressed }) => [styles.quickLinkButton, pressed ? styles.pressed : null]}
+              >
+                <AppText color={palette.darkText} style={styles.quickLinkLabel}>
+                  History
+                </AppText>
+              </Pressable>
+            </View>
+          ) : null}
 
           <View style={styles.actions}>
-            <Pressable
-              onPress={() => router.push("/style" as Href)}
-              style={({ pressed }) => [styles.primaryAction, pressed ? styles.pressed : null]}
-            >
-              <Feather color={colors.white} name="camera" size={18} />
-              <AppText color={colors.white} style={styles.primaryActionLabel}>
-                Log Outfit with This Item
-              </AppText>
-            </Pressable>
+            {detail.detail.lifecycle_status === "archived" ? (
+              <Pressable
+                onPress={() => void restoreItem()}
+                style={({ pressed }) => [styles.primaryAction, pressed ? styles.pressed : null]}
+              >
+                <Feather color={colors.white} name="refresh-ccw" size={18} />
+                <AppText color={colors.white} style={styles.primaryActionLabel}>
+                  {detail.isRestoring ? "Restoring..." : "Restore Item"}
+                </AppText>
+              </Pressable>
+            ) : (
+              <>
+                <Pressable
+                  onPress={() => router.push("/style" as Href)}
+                  style={({ pressed }) => [styles.primaryAction, pressed ? styles.pressed : null]}
+                >
+                  <Feather color={colors.white} name="camera" size={18} />
+                  <AppText color={colors.white} style={styles.primaryActionLabel}>
+                    Log Outfit with This Item
+                  </AppText>
+                </Pressable>
 
-            <Pressable
-              onPress={() =>
-                setActionMessage(
-                  "Editing confirmed closet items is not yet exposed in the mobile API."
-                )
-              }
-              style={({ pressed }) => [styles.secondaryAction, pressed ? styles.pressed : null]}
-            >
-              <Feather color={palette.darkText} name="edit-3" size={16} />
-              <AppText color={palette.darkText} style={styles.secondaryActionLabel}>
-                Edit Item
-              </AppText>
-            </Pressable>
+                <Pressable
+                  onPress={() => router.push(`/closet/${itemId}/edit` as Href)}
+                  style={({ pressed }) => [styles.secondaryAction, pressed ? styles.pressed : null]}
+                >
+                  <Feather color={palette.darkText} name="edit-3" size={16} />
+                  <AppText color={palette.darkText} style={styles.secondaryActionLabel}>
+                    Edit Item
+                  </AppText>
+                </Pressable>
 
-            <Pressable
-              onPress={() => void archiveItem()}
-              style={({ pressed }) => [styles.dangerAction, pressed ? styles.pressed : null]}
-            >
-              <AppText color={palette.destructive} style={styles.dangerLabel}>
-                {detail.isArchiving ? "Archiving..." : "Archive Item"}
-              </AppText>
-            </Pressable>
+                <Pressable
+                  onPress={() => void archiveItem()}
+                  style={({ pressed }) => [styles.dangerAction, pressed ? styles.pressed : null]}
+                >
+                  <AppText color={palette.destructive} style={styles.dangerLabel}>
+                    {detail.isArchiving ? "Archiving..." : "Archive Item"}
+                  </AppText>
+                </Pressable>
+              </>
+            )}
           </View>
         </ScrollView>
       </View>
@@ -389,9 +502,6 @@ export default function ClosetItemDetailScreen() {
         <AppText color={palette.warmGray} style={styles.sheetBody}>
           {selectedField?.value}
         </AppText>
-        <AppText color={palette.muted} style={styles.sheetHelper}>
-          Confirmed-item editing is still review-first in Tenue. This mobile surface is currently read-only.
-        </AppText>
       </ModalSheet>
 
       <ModalSheet onClose={() => setMenuOpen(false)} visible={menuOpen}>
@@ -399,35 +509,47 @@ export default function ClosetItemDetailScreen() {
           Options
         </AppText>
         <View style={styles.menuStack}>
-          <MenuRow
-            label="View Similar Items"
-            onPress={() => {
-              setMenuOpen(false);
-              router.push(`/closet/${itemId}/similar` as Href);
-            }}
-          />
-          <MenuRow
-            label="View History"
-            onPress={() => {
-              setMenuOpen(false);
-              router.push(`/closet/${itemId}/history` as Href);
-            }}
-          />
-          <MenuRow
-            label="Edit Item"
-            onPress={() => {
-              setMenuOpen(false);
-              setActionMessage("Editing confirmed closet items is not yet exposed in the mobile API.");
-            }}
-          />
-          <MenuRow
-            destructive
-            label="Archive Item"
-            onPress={() => {
-              setMenuOpen(false);
-              void archiveItem();
-            }}
-          />
+          {detail.detail.lifecycle_status !== "archived" ? (
+            <>
+              <MenuRow
+                label="View Similar Items"
+                onPress={() => {
+                  setMenuOpen(false);
+                  router.push(`/closet/${itemId}/similar` as Href);
+                }}
+              />
+              <MenuRow
+                label="View History"
+                onPress={() => {
+                  setMenuOpen(false);
+                  router.push(`/closet/${itemId}/history` as Href);
+                }}
+              />
+              <MenuRow
+                label="Edit Item"
+                onPress={() => {
+                  setMenuOpen(false);
+                  router.push(`/closet/${itemId}/edit` as Href);
+                }}
+              />
+              <MenuRow
+                destructive
+                label="Archive Item"
+                onPress={() => {
+                  setMenuOpen(false);
+                  void archiveItem();
+                }}
+              />
+            </>
+          ) : (
+            <MenuRow
+              label="Restore Item"
+              onPress={() => {
+                setMenuOpen(false);
+                void restoreItem();
+              }}
+            />
+          )}
         </View>
       </ModalSheet>
 
@@ -558,6 +680,50 @@ const styles = StyleSheet.create({
   metaSection: {
     paddingHorizontal: 24,
     marginBottom: 32
+  },
+  statusCard: {
+    marginHorizontal: 24,
+    marginBottom: 18,
+    borderRadius: 18,
+    backgroundColor: palette.surface,
+    padding: 16,
+    gap: 4,
+    shadowColor: palette.shadow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 1,
+    shadowRadius: 14,
+    elevation: 4
+  },
+  statusTitle: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 14,
+    lineHeight: 18
+  },
+  statusBody: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 12,
+    lineHeight: 17
+  },
+  imageStrip: {
+    gap: 10,
+    paddingHorizontal: 24,
+    paddingBottom: 8
+  },
+  imageThumbShell: {
+    width: 72,
+    height: 88,
+    borderRadius: 18,
+    padding: 3,
+    backgroundColor: palette.surface
+  },
+  imageThumbShellActive: {
+    borderWidth: 1,
+    borderColor: palette.darkText
+  },
+  imageThumb: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 14
   },
   title: {
     fontFamily: fontFamilies.serifSemiBold,
@@ -765,11 +931,6 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.sansRegular,
     fontSize: 15,
     lineHeight: 22
-  },
-  sheetHelper: {
-    fontFamily: fontFamilies.sansRegular,
-    fontSize: 13,
-    lineHeight: 18
   },
   menuStack: {
     gap: 2
