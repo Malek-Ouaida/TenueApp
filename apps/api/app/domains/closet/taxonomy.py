@@ -4,7 +4,7 @@ import re
 
 from app.domains.closet.models import LifecycleStatus, ProcessingStatus, ReviewStatus
 
-TAXONOMY_VERSION = "closet-taxonomy-v1"
+TAXONOMY_VERSION = "closet-taxonomy-v2"
 REQUIRED_CONFIRMATION_FIELDS = ("category", "subcategory")
 SUPPORTED_FIELD_ORDER = (
     "title",
@@ -15,19 +15,86 @@ SUPPORTED_FIELD_ORDER = (
     "pattern",
     "brand",
     "style_tags",
+    "fit_tags",
     "occasion_tags",
     "season_tags",
+    "silhouette",
+    "attributes",
 )
 SUPPORTED_FIELD_NAMES = frozenset(SUPPORTED_FIELD_ORDER)
 
 CATEGORY_SUBCATEGORIES = {
-    "tops": ["t-shirt", "shirt", "blouse", "tank top", "sweater", "hoodie"],
-    "bottoms": ["jeans", "trousers", "shorts", "skirt", "leggings"],
-    "dresses": ["mini dress", "midi dress", "maxi dress"],
-    "outerwear": ["jacket", "coat", "blazer", "cardigan"],
-    "shoes": ["sneakers", "boots", "heels", "flats", "sandals", "loafers"],
-    "bags": ["tote", "shoulder bag", "crossbody", "backpack", "clutch"],
-    "accessories": ["belt", "hat", "scarf", "sunglasses", "jewelry"],
+    "tops": [
+        "t-shirt",
+        "shirt",
+        "blouse",
+        "tank top",
+        "camisole",
+        "polo",
+        "sweater",
+        "sweatshirt",
+        "hoodie",
+        "bodysuit",
+    ],
+    "bottoms": [
+        "jeans",
+        "trousers",
+        "shorts",
+        "skirt",
+        "leggings",
+        "joggers",
+    ],
+    "dresses": [
+        "mini dress",
+        "midi dress",
+        "maxi dress",
+        "slip dress",
+        "shirt dress",
+        "sweater dress",
+    ],
+    "outerwear": [
+        "blazer",
+        "jacket",
+        "coat",
+        "trench coat",
+        "cardigan",
+        "vest",
+    ],
+    "one_piece": [
+        "jumpsuit",
+        "romper",
+    ],
+    "shoes": [
+        "sneakers",
+        "boots",
+        "heels",
+        "flats",
+        "loafers",
+        "sandals",
+        "mules",
+    ],
+    "bags": [
+        "tote",
+        "shoulder bag",
+        "crossbody",
+        "backpack",
+        "clutch",
+    ],
+    "jewelry": [
+        "necklace",
+        "earrings",
+        "bracelet",
+        "ring",
+        "watch",
+    ],
+    "accessories": [
+        "belt",
+        "hat",
+        "scarf",
+        "sunglasses",
+        "wallet",
+        "jewelry",
+    ],
 }
 
 COLORS = [
@@ -35,6 +102,7 @@ COLORS = [
     "white",
     "gray",
     "beige",
+    "cream",
     "brown",
     "blue",
     "navy",
@@ -53,6 +121,7 @@ MATERIALS = [
     "cotton",
     "denim",
     "wool",
+    "cashmere",
     "leather",
     "faux leather",
     "linen",
@@ -60,6 +129,7 @@ MATERIALS = [
     "satin",
     "knit",
     "polyester",
+    "nylon",
     "suede",
     "chiffon",
 ]
@@ -68,6 +138,7 @@ PATTERNS = [
     "solid",
     "striped",
     "plaid",
+    "checkered",
     "floral",
     "animal print",
     "polka dot",
@@ -75,9 +146,77 @@ PATTERNS = [
     "textured",
 ]
 
-STYLE_TAGS = ["casual", "sporty"]
-OCCASION_TAGS = ["formal", "business", "evening"]
-SEASON_TAGS = ["summer", "winter"]
+STYLE_TAGS = [
+    "minimal",
+    "classic",
+    "tailored",
+    "sporty",
+    "romantic",
+    "edgy",
+    "bohemian",
+    "streetwear",
+    "preppy",
+    "casual",
+]
+
+FIT_TAGS = [
+    "oversized",
+    "relaxed",
+    "fitted",
+    "slim",
+    "cropped",
+    "wide_leg",
+    "straight_leg",
+    "tapered",
+    "bodycon",
+]
+
+OCCASION_TAGS = [
+    "everyday",
+    "work",
+    "business",
+    "formal",
+    "evening",
+    "event",
+    "active",
+    "travel",
+    "lounge",
+    "vacation",
+]
+
+SEASON_TAGS = ["spring", "summer", "fall", "winter"]
+
+SILHOUETTES = [
+    "a_line",
+    "straight",
+    "fit_and_flare",
+    "pencil",
+    "column",
+    "wide_leg",
+    "tapered",
+]
+
+ATTRIBUTES = [
+    "crew_neck",
+    "v_neck",
+    "collared",
+    "button_front",
+    "sleeveless",
+    "short_sleeve",
+    "long_sleeve",
+    "off_shoulder",
+    "halter",
+    "racerback",
+    "wrap",
+    "quilted",
+    "waterproof",
+    "pointed_toe",
+    "open_toe",
+    "stiletto_heel",
+    "block_heel",
+    "kitten_heel",
+    "platform",
+]
 
 CATEGORY_VALUES = tuple(CATEGORY_SUBCATEGORIES.keys())
 SUBCATEGORY_VALUES = tuple(
@@ -102,8 +241,11 @@ def build_metadata_options() -> dict[str, object]:
         "materials": MATERIALS,
         "patterns": PATTERNS,
         "style_tags": STYLE_TAGS,
+        "fit_tags": FIT_TAGS,
         "occasion_tags": OCCASION_TAGS,
         "season_tags": SEASON_TAGS,
+        "silhouettes": SILHOUETTES,
+        "attributes": ATTRIBUTES,
     }
 
 
@@ -118,7 +260,7 @@ def is_supported_field_name(field_name: str) -> bool:
 
 
 def is_supported_taxonomy_version(value: str) -> bool:
-    return value == TAXONOMY_VERSION
+    return value in {"closet-taxonomy-v1", TAXONOMY_VERSION}
 
 
 def canonicalize_category_filter(value: str) -> str | None:

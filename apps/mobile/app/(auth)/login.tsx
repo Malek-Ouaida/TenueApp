@@ -43,7 +43,7 @@ export default function LoginScreen() {
   }
 
   return (
-    <AuthScreen scrollable={false}>
+    <AuthScreen>
       <View style={styles.page}>
         <Animated.View style={buildFadeUpStyle(intro[0], -8)}>
           <AuthBackButton onPress={() => router.back()} />
@@ -57,41 +57,37 @@ export default function LoginScreen() {
         </Animated.View>
 
         <View style={styles.formBlock}>
-          <Animated.View style={buildFadeUpStyle(intro[2])}>
-            <AuthTextField
-              autoCapitalize="none"
-              autoComplete="email"
-              keyboardType="email-address"
-              label="Email"
-              placeholder="you@example.com"
-              value={email}
-              onChangeText={setEmail}
-            />
-          </Animated.View>
+          <AuthTextField
+            autoCapitalize="none"
+            autoComplete="email"
+            keyboardType="email-address"
+            label="Email"
+            placeholder="you@example.com"
+            value={email}
+            onChangeText={setEmail}
+          />
 
-          <Animated.View style={buildFadeUpStyle(intro[3])}>
-            <AuthTextField
-              autoCapitalize="none"
-              autoComplete="password"
-              label="Password"
-              placeholder="••••••••"
-              rightAccessory={
-                <Pressable
-                  onPress={() => setShowPassword((current) => !current)}
-                  style={({ pressed }) => [pressed ? styles.pressedIcon : null]}
-                >
-                  <Feather
-                    color={authPalette.subtle}
-                    name={showPassword ? "eye-off" : "eye"}
-                    size={18}
-                  />
-                </Pressable>
-              }
-              secureTextEntry={!showPassword}
-              value={password}
-              onChangeText={setPassword}
-            />
-          </Animated.View>
+          <AuthTextField
+            autoCapitalize="none"
+            autoComplete="password"
+            label="Password"
+            placeholder="••••••••"
+            rightAccessory={
+              <Pressable
+                onPress={() => setShowPassword((current) => !current)}
+                style={({ pressed }) => [pressed ? styles.pressedIcon : null]}
+              >
+                <Feather
+                  color={authPalette.subtle}
+                  name={showPassword ? "eye-off" : "eye"}
+                  size={18}
+                />
+              </Pressable>
+            }
+            secureTextEntry={!showPassword}
+            value={password}
+            onChangeText={setPassword}
+          />
         </View>
 
         <Animated.View style={[styles.forgotRow, buildFadeUpStyle(intro[4], 10)]}>
@@ -130,7 +126,7 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   page: {
-    flex: 1
+    flexGrow: 1
   },
   titleBlock: {
     marginTop: 28,

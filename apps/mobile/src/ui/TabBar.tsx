@@ -12,16 +12,16 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { useOutfits } from "../outfits/provider";
 import { useAuth } from "../auth/provider";
 import { selectImagesFromLibrary, selectSingleImage, uploadClosetAssets } from "../closet/upload";
+import { useOutfits } from "../outfits/provider";
 import { featurePalette, featureShadows } from "../theme/feature";
-import { launchCameraForSingleImage } from "../media/picker";
 import {
   triggerErrorHaptic,
   triggerSelectionHaptic,
   triggerSuccessHaptic
 } from "../lib/haptics";
+import { supportsNativeAnimatedDriver } from "../lib/runtime";
 import { AppText } from "./Typography";
 
 type TabKey = "home" | "closet" | "lookbook" | "profile";
@@ -75,7 +75,7 @@ const TAB_ITEMS: Array<{
 export function TenueTabBar({ navigation, state }: TenueTabBarProps) {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
-  const { setLogOutfitPhotoUri } = useOutfits();
+  const { setLogOutfitPhotoAsset } = useOutfits();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [closetExpanded, setClosetExpanded] = useState(false);
@@ -107,7 +107,7 @@ export function TenueTabBar({ navigation, state }: TenueTabBarProps) {
       damping: 18,
       mass: 0.8,
       stiffness: 200,
-      useNativeDriver: true
+      useNativeDriver: supportsNativeAnimatedDriver
     }).start();
   }, [menuOpen, menuProgress]);
 
@@ -117,7 +117,7 @@ export function TenueTabBar({ navigation, state }: TenueTabBarProps) {
       damping: 18,
       mass: 0.8,
       stiffness: 220,
-      useNativeDriver: true
+      useNativeDriver: supportsNativeAnimatedDriver
     }).start();
   }, [closetExpanded, closetProgress]);
 
@@ -143,12 +143,12 @@ export function TenueTabBar({ navigation, state }: TenueTabBarProps) {
     await delay(150);
 
     try {
-      const uri = await launchCameraForSingleImage();
-      if (!uri) {
+      const asset = await selectSingleImage("camera");
+      if (!asset) {
         return;
       }
 
-      setLogOutfitPhotoUri(uri);
+      setLogOutfitPhotoAsset(asset);
       await triggerSuccessHaptic();
       router.push(({ pathname: "/log-outfit", params: { mode: "photo" } } as unknown) as Href);
     } catch {

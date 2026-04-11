@@ -10,3 +10,5 @@ const nativeModules = NativeModules as {
 
 export const isIosSimulator =
   Platform.OS === "ios" && nativeModules.TenueRuntime?.isSimulator === true;
+
+export const supportsNativeAnimatedDriver = Platform.OS !== "web";

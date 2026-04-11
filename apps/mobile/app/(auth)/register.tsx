@@ -51,7 +51,7 @@ export default function RegisterScreen() {
   }
 
   return (
-    <AuthScreen scrollable={false}>
+    <AuthScreen>
       <View style={styles.page}>
         <Animated.View style={buildFadeUpStyle(intro[0], -8)}>
           <AuthBackButton onPress={() => router.back()} />
@@ -65,19 +65,17 @@ export default function RegisterScreen() {
         </Animated.View>
 
         <View style={styles.formBlock}>
-          <Animated.View style={buildFadeUpStyle(intro[2])}>
-            <AuthTextField
-              autoCapitalize="none"
-              autoComplete="email"
-              keyboardType="email-address"
-              label="Email"
-              placeholder="you@example.com"
-              value={email}
-              onChangeText={setEmail}
-            />
-          </Animated.View>
+          <AuthTextField
+            autoCapitalize="none"
+            autoComplete="email"
+            keyboardType="email-address"
+            label="Email"
+            placeholder="you@example.com"
+            value={email}
+            onChangeText={setEmail}
+          />
 
-          <Animated.View style={buildFadeUpStyle(intro[3])}>
+          <View>
             <AuthTextField
               autoCapitalize="none"
               autoComplete="new-password"
@@ -122,7 +120,7 @@ export default function RegisterScreen() {
                 })}
               </View>
             ) : null}
-          </Animated.View>
+          </View>
         </View>
 
         <Animated.View style={[styles.termsBlock, buildFadeUpStyle(intro[4], 8)]}>
@@ -161,7 +159,7 @@ export default function RegisterScreen() {
 
 const styles = StyleSheet.create({
   page: {
-    flex: 1
+    flexGrow: 1
   },
   titleBlock: {
     marginTop: 28,

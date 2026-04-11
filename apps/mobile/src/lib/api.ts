@@ -34,18 +34,29 @@ export async function apiRequest<T>(
     headers["Content-Type"] = "application/json";
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    method: options.method ?? "GET",
-    headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      method: options.method ?? "GET",
+      headers,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined
+    });
+  } catch {
+    throw new ApiError(
+      `Could not reach the Tenue API at ${apiBaseUrl}. Start the backend or set EXPO_PUBLIC_API_BASE_URL.`,
+      0,
+      "network_error"
+    );
+  }
 
   if (!response.ok) {
-    let message = "Request failed.";
+    let message = `Request failed (${response.status}).`;
     let code: string | undefined;
+    const responseText = await response.text();
 
     try {
-      const payload = (await response.json()) as ErrorPayload;
+      const payload = JSON.parse(responseText) as ErrorPayload;
       if (typeof payload.detail === "string") {
         message = payload.detail;
       } else if (payload.detail?.message) {
@@ -53,7 +64,10 @@ export async function apiRequest<T>(
         code = payload.detail.code;
       }
     } catch {
-      message = "Request failed.";
+      const trimmed = responseText.trim();
+      if (trimmed && !trimmed.startsWith("<")) {
+        message = trimmed;
+      }
     }
 
     throw new ApiError(message, response.status, code);

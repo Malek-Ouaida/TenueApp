@@ -46,7 +46,7 @@ const palette = {
 
 type SortOption = "newest" | "oldest" | "most_worn" | "least_worn" | "recently_worn";
 
-const categories = [
+const DEFAULT_CATEGORIES = [
   { id: "all", label: "All" },
   { id: "tops", label: "Tops" },
   { id: "bottoms", label: "Bottoms" },
@@ -103,11 +103,11 @@ function buildItemTag(
 }
 
 function getMaterialOptions(materials: string[]) {
-  return ["All", ...materials.slice(0, 10)];
+  return ["All", ...materials];
 }
 
 function getColorOptions(colorsList: string[]) {
-  return ["All", ...colorsList.slice(0, 12)];
+  return ["All", ...colorsList];
 }
 
 export default function ClosetBrowseScreen() {
@@ -128,6 +128,8 @@ export default function ClosetBrowseScreen() {
   const [draftColor, setDraftColor] = useState("All");
   const [appliedMaterial, setAppliedMaterial] = useState("All");
   const [draftMaterial, setDraftMaterial] = useState("All");
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [draftIncludeArchived, setDraftIncludeArchived] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
   const [activeTab, setActiveTab] = useState<"closet" | "processing">(
     requestedTab === "processing" ? "processing" : "closet"
@@ -140,10 +142,33 @@ export default function ClosetBrowseScreen() {
       query: debouncedQuery,
       category: selectedCategory === "all" ? "" : selectedCategory,
       color: appliedColor === "All" ? "" : appliedColor,
-      material: appliedMaterial === "All" ? "" : appliedMaterial
+      material: appliedMaterial === "All" ? "" : appliedMaterial,
+      include_archived: includeArchived
     },
     50
   );
+
+  const categories = useMemo(() => {
+    const metadataCategories =
+      metadata.data?.categories.map((category) => ({
+        id: category.name,
+        label: humanizeEnum(category.name)
+      })) ?? [];
+    const observedCategories = closet.items
+      .map((item) => item.category)
+      .filter((value): value is string => Boolean(value))
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .map((value) => ({
+        id: value,
+        label: humanizeEnum(value)
+      }));
+
+    const deduped = [...DEFAULT_CATEGORIES, ...metadataCategories, ...observedCategories].filter(
+      (entry, index, entries) => entries.findIndex((candidate) => candidate.id === entry.id) === index
+    );
+
+    return deduped;
+  }, [closet.items, metadata.data?.categories]);
 
   const sortedItems = useMemo(() => {
     const usageByItemId = usageIndex.snapshot.byItemId;
@@ -178,7 +203,7 @@ export default function ClosetBrowseScreen() {
   const processingSections = reviewQueue.sections.filter((section) => section.key !== "needs_review");
   const processingCount = processingSections.reduce((total, section) => total + section.items.length, 0);
   const hasActiveFilters =
-    appliedColor !== "All" || appliedMaterial !== "All" || sortBy !== "newest";
+    appliedColor !== "All" || appliedMaterial !== "All" || includeArchived || sortBy !== "newest";
   const colorOptions = getColorOptions(metadata.data?.colors ?? []);
   const materialOptions = getMaterialOptions(metadata.data?.materials ?? []);
 
@@ -331,7 +356,6 @@ export default function ClosetBrowseScreen() {
           {activeTab === "processing" ? (
             <ProcessingTab
               onOpenItem={(reviewItemId) => router.push(`/review/${reviewItemId}` as Href)}
-              onRefresh={() => reviewQueue.refresh()}
               readyCount={needsReviewCount}
               sections={processingSections}
             />
@@ -354,8 +378,9 @@ export default function ClosetBrowseScreen() {
                 showsHorizontalScrollIndicator={false}
               >
                 <SummaryPill label={`${sortedItems.length} items`} />
-                <SummaryPill label="Confirmed only" />
+                <SummaryPill label={includeArchived ? "Confirmed + archived" : "Confirmed only"} />
                 <SummaryPill label={sortLabels[sortBy]} />
+                {includeArchived ? <SummaryPill label="Including archived" /> : null}
               </ScrollView>
 
               <ScrollView
@@ -420,6 +445,17 @@ export default function ClosetBrowseScreen() {
                 </Pressable>
               ) : null}
 
+              {closet.error ? (
+                <View style={styles.noticeCard}>
+                  <AppText color={palette.darkText} style={styles.noticeTitle}>
+                    Closet could not refresh
+                  </AppText>
+                  <AppText color={palette.warmGray} style={styles.noticeBody}>
+                    {closet.error}
+                  </AppText>
+                </View>
+              ) : null}
+
               {closet.isLoading ? (
                 <View style={styles.grid}>
                   {[0, 1, 2, 3].map((index) => (
@@ -449,7 +485,13 @@ export default function ClosetBrowseScreen() {
                     return (
                       <Pressable
                         key={item.item_id}
-                        onPress={() => router.push(`/closet/${item.item_id}` as Href)}
+                        onPress={() =>
+                          router.push(
+                            includeArchived
+                              ? ({ pathname: "/closet/[itemId]", params: { itemId: item.item_id, archived: "1" } } as Href)
+                              : (`/closet/${item.item_id}` as Href)
+                          )
+                        }
                         style={({ pressed }) => [
                           styles.gridTile,
                           pressed ? styles.gridTilePressed : null
@@ -505,9 +547,11 @@ export default function ClosetBrowseScreen() {
                 setDraftSortBy("newest");
                 setDraftColor("All");
                 setDraftMaterial("All");
+                setDraftIncludeArchived(false);
                 setSortBy("newest");
                 setAppliedColor("All");
                 setAppliedMaterial("All");
+                setIncludeArchived(false);
               }}
               style={({ pressed }) => [
                 styles.resetButton,
@@ -524,6 +568,7 @@ export default function ClosetBrowseScreen() {
                 setSortBy(draftSortBy);
                 setAppliedColor(draftColor);
                 setAppliedMaterial(draftMaterial);
+                setIncludeArchived(draftIncludeArchived);
                 setShowFilter(false);
               }}
               style={({ pressed }) => [
@@ -542,6 +587,7 @@ export default function ClosetBrowseScreen() {
           setDraftSortBy(sortBy);
           setDraftColor(appliedColor);
           setDraftMaterial(appliedMaterial);
+          setDraftIncludeArchived(includeArchived);
           setShowFilter(false);
         }}
         visible={showFilter}
@@ -555,6 +601,7 @@ export default function ClosetBrowseScreen() {
               setDraftSortBy(sortBy);
               setDraftColor(appliedColor);
               setDraftMaterial(appliedMaterial);
+              setDraftIncludeArchived(includeArchived);
               setShowFilter(false);
             }}
             style={({ pressed }) => [
@@ -585,6 +632,16 @@ export default function ClosetBrowseScreen() {
           selectedValue={draftMaterial}
           title="Material"
           onSelect={setDraftMaterial}
+        />
+
+        <FilterGroup
+          options={[
+            { label: "Confirmed only", value: "confirmed" },
+            { label: "Include archived", value: "include_archived" }
+          ]}
+          selectedValue={draftIncludeArchived ? "include_archived" : "confirmed"}
+          title="Visibility"
+          onSelect={(value) => setDraftIncludeArchived(value === "include_archived")}
         />
       </ModalSheet>
     </>
@@ -942,6 +999,27 @@ const styles = StyleSheet.create({
     backgroundColor: palette.warmWhite,
     paddingHorizontal: 20,
     paddingVertical: 28
+  },
+  noticeCard: {
+    borderRadius: 20,
+    backgroundColor: palette.warmWhite,
+    padding: 16,
+    gap: 4,
+    shadowColor: palette.cardShadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 12,
+    elevation: 3
+  },
+  noticeTitle: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 14,
+    lineHeight: 18
+  },
+  noticeBody: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 12,
+    lineHeight: 16
   },
   sheetHeader: {
     flexDirection: "row",

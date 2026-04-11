@@ -511,6 +511,70 @@ def test_similarity_worker_creates_duplicate_candidates_and_explanations(
     assert second_response.json()["items"][0]["other_item"]["item_id"] == str(first_item_id)
 
 
+def test_similarity_other_item_matches_browse_item_contract(
+    client: TestClient,
+    db_session: Session,
+    fake_storage_client: InMemoryStorageClient,
+    fake_background_removal_provider: Any,
+    fake_metadata_extraction_provider: Any,
+) -> None:
+    headers = register_and_get_headers(client, email="similarity-contract@example.com")
+    processed_bytes = build_patterned_image_bytes(accent=(30, 70, 140))
+    first_item_id = create_review_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        headers=headers,
+        title="Contract tee A",
+        key_prefix="similarity-contract-a",
+        original_image_bytes=processed_bytes,
+        processed_image_bytes=processed_bytes,
+        raw_fields=default_top_tshirt_raw_fields(),
+    )
+    second_item_id = create_review_item(
+        client,
+        db_session,
+        fake_storage_client,
+        fake_background_removal_provider,
+        fake_metadata_extraction_provider,
+        headers=headers,
+        title="Contract tee B",
+        key_prefix="similarity-contract-b",
+        original_image_bytes=processed_bytes,
+        processed_image_bytes=processed_bytes,
+        raw_fields=default_top_tshirt_raw_fields(),
+    )
+
+    confirm_item_via_api(client, headers, item_id=first_item_id)
+    confirm_item_via_api(client, headers, item_id=second_item_id)
+    assert (
+        drain_worker(
+            db_session,
+            fake_storage_client,
+            fake_background_removal_provider,
+            fake_metadata_extraction_provider,
+        )
+        >= 2
+    )
+
+    browse_response = client.get("/closet/items", headers=headers)
+    similar_response = client.get(f"/closet/items/{first_item_id}/duplicates", headers=headers)
+
+    assert browse_response.status_code == 200
+    assert similar_response.status_code == 200
+    browse_items = {
+        item["item_id"]: item
+        for item in cast(list[dict[str, Any]], browse_response.json()["items"])
+    }
+    other_item = cast(dict[str, Any], similar_response.json()["items"][0]["other_item"])
+    browse_item = browse_items[str(second_item_id)]
+
+    assert set(other_item.keys()) == set(browse_item.keys())
+    assert other_item["season_tags"] == browse_item["season_tags"]
+
+
 def test_similarity_metadata_only_fallback_returns_similar_items_with_issues(
     client: TestClient,
     db_session: Session,

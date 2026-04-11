@@ -23,7 +23,7 @@ export type CursorPageResponse<T> = {
 };
 
 type ErrorPayload = {
-  detail?: string;
+  detail?: string | { code?: string; message?: string };
 };
 
 type CachedResponseEntry = {
@@ -111,8 +111,10 @@ export async function apiRequest<T>(
 
       try {
         const payload = JSON.parse(responseText) as ErrorPayload;
-        if (payload.detail) {
+        if (typeof payload.detail === "string") {
           detail = payload.detail;
+        } else if (payload.detail?.message) {
+          detail = payload.detail.message;
         }
       } catch {
         const trimmed = responseText.trim();

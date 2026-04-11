@@ -346,6 +346,23 @@ class ClosetRepository:
         )
         return self.session.execute(statement).scalars().first()
 
+    def list_expired_pending_upload_intents(
+        self,
+        *,
+        now: datetime,
+        limit: int,
+    ) -> list[ClosetUploadIntent]:
+        statement = (
+            select(ClosetUploadIntent)
+            .where(
+                ClosetUploadIntent.status == UploadIntentStatus.PENDING,
+                ClosetUploadIntent.expires_at <= self._normalize_cursor_datetime(now),
+            )
+            .order_by(ClosetUploadIntent.expires_at.asc(), ClosetUploadIntent.id.asc())
+            .limit(limit)
+        )
+        return list(self.session.execute(statement).scalars())
+
     def mark_upload_intent_expired(
         self,
         *,
@@ -455,8 +472,41 @@ class ClosetRepository:
         else:
             item_image.is_active = True
             item_image.position = position
+            item_image.archived_at = None
+            item_image.archived_by_user_id = None
 
         return item_image
+
+    def get_item_image_for_item(
+        self,
+        *,
+        closet_item_id: UUID,
+        image_id: UUID,
+    ) -> ClosetItemImage | None:
+        statement = select(ClosetItemImage).where(
+            ClosetItemImage.id == image_id,
+            ClosetItemImage.closet_item_id == closet_item_id,
+        )
+        return self.session.execute(statement).scalar_one_or_none()
+
+    def get_item_image_asset_for_item(
+        self,
+        *,
+        closet_item_id: UUID,
+        image_id: UUID,
+    ) -> tuple[ClosetItemImage, MediaAsset] | None:
+        statement = (
+            select(ClosetItemImage, MediaAsset)
+            .join(MediaAsset, MediaAsset.id == ClosetItemImage.asset_id)
+            .where(
+                ClosetItemImage.id == image_id,
+                ClosetItemImage.closet_item_id == closet_item_id,
+            )
+        )
+        row = self.session.execute(statement).first()
+        if row is None:
+            return None
+        return row[0], row[1]
 
     def has_active_primary_image(self, *, item: ClosetItem) -> bool:
         if item.primary_image_id is None:
@@ -561,7 +611,21 @@ class ClosetRepository:
         )
         for item_image in self.session.execute(statement).scalars():
             item_image.is_active = False
+            item_image.archived_at = utcnow()
+            item_image.archived_by_user_id = None
         self.session.flush()
+
+    def archive_item_image(
+        self,
+        *,
+        item_image: ClosetItemImage,
+        archived_by_user_id: UUID | None,
+    ) -> ClosetItemImage:
+        item_image.is_active = False
+        item_image.archived_at = utcnow()
+        item_image.archived_by_user_id = archived_by_user_id
+        self.session.flush()
+        return item_image
 
     def list_field_states(self, *, closet_item_id: UUID) -> list[ClosetItemFieldState]:
         statement = select(ClosetItemFieldState).where(
@@ -698,8 +762,11 @@ class ClosetRepository:
         projection.pattern = extract_string_value(field_states.get("pattern"))
         projection.brand = extract_string_value(field_states.get("brand"))
         projection.style_tags = extract_list_value(field_states.get("style_tags")) or None
+        projection.fit_tags = extract_list_value(field_states.get("fit_tags")) or None
         projection.occasion_tags = extract_list_value(field_states.get("occasion_tags")) or None
         projection.season_tags = extract_list_value(field_states.get("season_tags")) or None
+        projection.silhouette = extract_string_value(field_states.get("silhouette"))
+        projection.attributes = extract_list_value(field_states.get("attributes")) or None
         projection.confirmed_at = item.confirmed_at
 
         self.session.flush()
@@ -716,6 +783,7 @@ class ClosetRepository:
         *,
         item_id: UUID,
         user_id: UUID,
+        include_archived: bool = False,
     ) -> tuple[ClosetItem, ClosetItemMetadataProjection] | None:
         statement = (
             select(ClosetItem, ClosetItemMetadataProjection)
@@ -726,7 +794,11 @@ class ClosetRepository:
             .where(
                 ClosetItem.id == item_id,
                 ClosetItem.user_id == user_id,
-                ClosetItem.lifecycle_status == LifecycleStatus.CONFIRMED,
+                ClosetItem.lifecycle_status.in_(
+                    [LifecycleStatus.CONFIRMED, LifecycleStatus.ARCHIVED]
+                    if include_archived
+                    else [LifecycleStatus.CONFIRMED]
+                ),
                 ClosetItem.review_status == ReviewStatus.CONFIRMED,
                 ClosetItem.confirmed_at.is_not(None),
                 ClosetItemMetadataProjection.user_id == user_id,
@@ -815,6 +887,7 @@ class ClosetRepository:
         primary_color: str | None,
         material: str | None,
         pattern: str | None,
+        include_archived: bool = False,
     ) -> list[tuple[ClosetItem, ClosetItemMetadataProjection]]:
         normalized_cursor_confirmed_at = self._normalize_cursor_datetime(cursor_confirmed_at)
         statement = (
@@ -825,7 +898,11 @@ class ClosetRepository:
             )
             .where(
                 ClosetItem.user_id == user_id,
-                ClosetItem.lifecycle_status == LifecycleStatus.CONFIRMED,
+                ClosetItem.lifecycle_status.in_(
+                    [LifecycleStatus.CONFIRMED, LifecycleStatus.ARCHIVED]
+                    if include_archived
+                    else [LifecycleStatus.CONFIRMED]
+                ),
                 ClosetItem.review_status == ReviewStatus.CONFIRMED,
                 ClosetItem.confirmed_at.is_not(None),
                 ClosetItemMetadataProjection.user_id == user_id,

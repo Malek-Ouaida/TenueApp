@@ -23,6 +23,7 @@ import {
   parseDateKey
 } from "../lib/reference/wardrobe";
 import { GlassIconButton } from "../ui/feature-components";
+import { supportsNativeAnimatedDriver } from "../lib/runtime";
 import { featurePalette, featureShadows, featureTypography } from "../theme/feature";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
@@ -73,7 +74,7 @@ export default function OutfitDetailScreen() {
             Animated.timing(offset, {
               toValue: -SCREEN_WIDTH,
               duration: 220,
-              useNativeDriver: true
+              useNativeDriver: supportsNativeAnimatedDriver
             }).start(() => {
               setCurrentIdx((value) => value + 1);
               offset.setValue(0);
@@ -85,7 +86,7 @@ export default function OutfitDetailScreen() {
             Animated.timing(offset, {
               toValue: SCREEN_WIDTH,
               duration: 220,
-              useNativeDriver: true
+              useNativeDriver: supportsNativeAnimatedDriver
             }).start(() => {
               setCurrentIdx((value) => value - 1);
               offset.setValue(0);
@@ -98,7 +99,7 @@ export default function OutfitDetailScreen() {
             damping: 20,
             mass: 0.8,
             stiffness: 220,
-            useNativeDriver: true
+            useNativeDriver: supportsNativeAnimatedDriver
           }).start();
         }
       }),
@@ -220,7 +221,7 @@ function OutfitContent({
     Animated.timing(heroOpacity, {
       toValue: 1,
       duration: 320,
-      useNativeDriver: true
+      useNativeDriver: supportsNativeAnimatedDriver
     }).start();
   }, [currentDateKey, heroOpacity]);
 

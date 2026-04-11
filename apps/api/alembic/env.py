@@ -1,8 +1,8 @@
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import engine_from_config, inspect, pool, text
 
-from alembic import context
 from app.core.config import settings
 from app.db.base import Base
 
@@ -16,6 +16,8 @@ config.print_stdout(
     f"{settings.database_target} (source: {settings.database_source}, "
     f"host: {settings.database_host or 'unknown'})"
 )
+
+# Escape % so SQLAlchemy URLs with special chars do not break config interpolation.
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
@@ -28,6 +30,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,
     )
 
     with context.begin_transaction():
@@ -35,15 +38,26 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    section = config.get_section(config.config_ini_section) or {}
+    section["sqlalchemy.url"] = config.get_main_option("sqlalchemy.url")
+
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
 
+    # Run the version-column widening in its own clean transaction.
+    with connectable.begin() as pre_connection:
+        widen_alembic_version_num_if_needed(pre_connection)
+
+    # Give Alembic a fresh connection that it fully controls.
     with connectable.connect() as connection:
-        widen_alembic_version_num_if_needed(connection)
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+        )
 
         with context.begin_transaction():
             context.run_migrations()
@@ -75,7 +89,6 @@ def widen_alembic_version_num_if_needed(connection) -> None:
     connection.execute(
         text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)")
     )
-    connection.commit()
 
 
 if context.is_offline_mode():

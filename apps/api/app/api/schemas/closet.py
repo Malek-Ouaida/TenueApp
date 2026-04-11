@@ -21,8 +21,11 @@ class ClosetMetadataOptionsResponse(BaseModel):
     materials: list[str]
     patterns: list[str]
     style_tags: list[str]
+    fit_tags: list[str]
     occasion_tags: list[str]
     season_tags: list[str]
+    silhouettes: list[str]
+    attributes: list[str]
 
 
 class ClosetDraftCreateRequest(BaseModel):
@@ -199,8 +202,11 @@ class ClosetMetadataProjectionSnapshot(BaseModel):
     pattern: str | None
     brand: str | None
     style_tags: list[str] | None
+    fit_tags: list[str] | None
     occasion_tags: list[str] | None
     season_tags: list[str] | None
+    silhouette: str | None
+    attributes: list[str] | None
     confirmed_at: datetime | None
     updated_at: datetime
 
@@ -260,6 +266,54 @@ class ClosetSimilarityListResponse(BaseModel):
     similarity_status: str
     latest_run: ClosetProcessingRunSnapshot | None
     items: list[ClosetSimilarityListItemSnapshot]
+
+
+class ClosetConfirmedItemFieldChange(BaseModel):
+    field_name: str
+    operation: Literal["set_value", "clear", "mark_not_applicable"]
+    canonical_value: Any | None = None
+
+    @field_validator("field_name")
+    @classmethod
+    def normalize_field_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("field_name is required.")
+        return normalized
+
+
+class ClosetConfirmedItemPatchRequest(BaseModel):
+    expected_item_version: str
+    changes: list[ClosetConfirmedItemFieldChange] = Field(min_length=1)
+
+    @field_validator("expected_item_version")
+    @classmethod
+    def normalize_expected_item_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("expected_item_version is required.")
+        return normalized
+
+
+class ClosetConfirmedItemEditSnapshot(BaseModel):
+    item_id: UUID
+    lifecycle_status: str
+    processing_status: str
+    review_status: str
+    confirmed_at: datetime
+    updated_at: datetime
+    item_version: str
+    editable_fields: list[str]
+    display_image: ClosetProcessingImageSnapshot | None
+    thumbnail_image: ClosetProcessingImageSnapshot | None
+    original_image: ClosetProcessingImageSnapshot | None
+    original_images: list[ClosetProcessingImageSnapshot]
+    metadata_projection: ClosetMetadataProjectionSnapshot
+    field_states: list[ClosetFieldStateSnapshot]
+
+
+class ClosetConfirmedItemImageReorderRequest(BaseModel):
+    image_ids: list[UUID] = Field(min_length=1)
 
 
 class ClosetExtractionSnapshot(BaseModel):

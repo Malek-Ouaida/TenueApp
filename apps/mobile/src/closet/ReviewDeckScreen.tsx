@@ -11,6 +11,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
   useWindowDimensions
 } from "react-native";
@@ -21,6 +22,7 @@ import {
   triggerSelectionHaptic,
   triggerSuccessHaptic
 } from "../lib/haptics";
+import { supportsNativeAnimatedDriver } from "../lib/runtime";
 import { useAuth } from "../auth/provider";
 import { fontFamilies } from "../theme/typography";
 import { prefetchClosetReviewItem, useClosetMetadataOptions, useClosetReviewItem } from "./hooks";
@@ -78,6 +80,8 @@ export function ReviewDeckScreen({
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [optimisticValues, setOptimisticValues] = useState<Record<string, ClosetFieldCanonicalValue>>({});
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftBrand, setDraftBrand] = useState("");
   const [pendingSaveCount, setPendingSaveCount] = useState(0);
   const hasPendingSaves = pendingSaveCount > 0;
 
@@ -123,6 +127,12 @@ export function ReviewDeckScreen({
     (reviewFlow.processing ? getReviewItemPreview(reviewFlow.processing)?.url : undefined) ??
     (currentDraft ? getDraftPrimaryImage(currentDraft)?.url : undefined) ??
     undefined;
+  const categoryField = displayedFields.find((field) => field.field.field_name === "category") ?? null;
+  const titleField = displayedFields.find((field) => field.field.field_name === "title") ?? null;
+  const brandField = displayedFields.find((field) => field.field.field_name === "brand") ?? null;
+  const editableSelectionFields = displayedFields.filter(
+    (field) => !["title", "brand", "category"].includes(field.field.field_name)
+  );
   const itemTitle =
     currentDraft?.title ??
     asString(displayedFields.find((field) => field.field.field_name === "subcategory")?.valueSelection ?? null) ??
@@ -162,19 +172,19 @@ export function ReviewDeckScreen({
         toValue: 1,
         duration: 240,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: true
+        useNativeDriver: supportsNativeAnimatedDriver
       }),
       Animated.timing(enterTranslateY, {
         toValue: 0,
         duration: 240,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: true
+        useNativeDriver: supportsNativeAnimatedDriver
       }),
       Animated.timing(enterOpacity, {
         toValue: 1,
         duration: 180,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: true
+        useNativeDriver: supportsNativeAnimatedDriver
       })
     ]);
 
@@ -192,13 +202,28 @@ export function ReviewDeckScreen({
     translateX
   ]);
 
+  useEffect(() => {
+    setDraftTitle(
+      asString(
+        reviewFlow.review?.review_fields.find((field) => field.field_name === "title")?.current_state.canonical_value ??
+          null
+      ) ?? ""
+    );
+    setDraftBrand(
+      asString(
+        reviewFlow.review?.review_fields.find((field) => field.field_name === "brand")?.current_state.canonical_value ??
+          null
+      ) ?? ""
+    );
+  }, [reviewFlow.review?.review_version]);
+
   const springToCenter = useCallback(async () => {
     await runAnimation(
       Animated.spring(translateX, {
         toValue: 0,
         tension: 95,
         friction: 11,
-        useNativeDriver: true
+        useNativeDriver: supportsNativeAnimatedDriver
       })
     );
   }, [translateX]);
@@ -210,7 +235,7 @@ export function ReviewDeckScreen({
         toValue: 180,
         duration: 320,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: true
+        useNativeDriver: supportsNativeAnimatedDriver
       })
     );
   }, [rotateY]);
@@ -221,7 +246,7 @@ export function ReviewDeckScreen({
         toValue: 0,
         duration: 240,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: true
+        useNativeDriver: supportsNativeAnimatedDriver
       })
     );
     setFlipped(false);
@@ -233,7 +258,7 @@ export function ReviewDeckScreen({
         toValue: screenWidth,
         duration: 240,
         easing: Easing.bezier(0.32, 0.72, 0, 1),
-        useNativeDriver: true
+        useNativeDriver: supportsNativeAnimatedDriver
       })
     );
   }, [screenWidth, translateX]);
@@ -294,6 +319,44 @@ export function ReviewDeckScreen({
         });
     },
     [applyFieldChange]
+  );
+
+  const queueFieldAction = useCallback(
+    (fieldName: string, change: ClosetReviewFieldChange) => {
+      const nextToken = (optimisticTokensRef.current[fieldName] ?? 0) + 1;
+      optimisticTokensRef.current[fieldName] = nextToken;
+      setPendingSaveCount((current) => current + 1);
+
+      saveQueueRef.current = saveQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          await applyFieldChange(change);
+        })
+        .finally(() => {
+          setPendingSaveCount((current) => Math.max(0, current - 1));
+        });
+    },
+    [applyFieldChange]
+  );
+
+  const saveTextField = useCallback(
+    (fieldName: "title" | "brand", value: string) => {
+      const normalized = value.trim();
+      queueFieldAction(
+        fieldName,
+        normalized
+          ? {
+              field_name: fieldName,
+              operation: "set_value",
+              canonical_value: normalized
+            }
+          : {
+              field_name: fieldName,
+              operation: "clear"
+            }
+      );
+    },
+    [queueFieldAction]
   );
 
   const prepareReviewForConfirm = useCallback(async () => {
@@ -448,7 +511,7 @@ export function ReviewDeckScreen({
               toValue: 0,
               tension: 95,
               friction: 11,
-              useNativeDriver: true
+              useNativeDriver: supportsNativeAnimatedDriver
             }).start(() => {
               void flipToEdit();
             });
@@ -459,7 +522,7 @@ export function ReviewDeckScreen({
             toValue: 0,
             tension: 95,
             friction: 11,
-            useNativeDriver: true
+            useNativeDriver: supportsNativeAnimatedDriver
           }).start();
         }
       }),
@@ -715,72 +778,225 @@ export function ReviewDeckScreen({
                     </View>
                   </View>
 
-                  {displayedFields.map((field) => {
-                    if (field.options.length === 0) {
-                      return null;
-                    }
+                  <View style={styles.editSections}>
+                    {categoryField ? (
+                      <View style={styles.derivedFieldCard}>
+                        <Text style={styles.editFieldLabel}>Category</Text>
+                        <Text style={styles.derivedFieldValue}>{categoryField.value}</Text>
+                        <Text style={styles.derivedFieldHelper}>
+                          Change subcategory to move this item into another category.
+                        </Text>
+                      </View>
+                    ) : null}
 
-                    const multi = fieldIsMultiValue(field.field.field_name);
-                    const selectedValues = multi
-                      ? asStringArray(field.valueSelection)
-                      : [asString(field.valueSelection) ?? ""].filter(Boolean);
-
-                    return (
-                      <View key={field.field.field_name} style={styles.editFieldBlock}>
-                        <Text style={styles.editFieldLabel}>{field.label}</Text>
-                        <View style={styles.chipsWrap}>
-                          {field.options.map((option) => {
-                            const selected = selectedValues.includes(option);
-
-                            return (
-                              <Pressable
-                                key={option}
-                                onPress={() => {
-                                  if (isBusy) {
-                                    return;
-                                  }
-
-                                  const nextSelection = multi
-                                    ? selected
-                                      ? selectedValues.filter((value) => value !== option)
-                                      : selectedValues.concat(option)
-                                    : [option];
-
-                                  queueFieldChange(
-                                    field.field.field_name,
-                                    multi ? nextSelection : nextSelection[0] ?? null,
-                                    nextSelection.length === 0
-                                      ? {
-                                          field_name: field.field.field_name,
-                                          operation: "clear"
-                                        }
-                                      : {
-                                          field_name: field.field.field_name,
-                                          operation: "set_value",
-                                          canonical_value: multi ? nextSelection : nextSelection[0]
-                                        }
-                                  );
-                                }}
-                                style={[
-                                  styles.chip,
-                                  selected ? styles.chipSelected : styles.chipIdle
-                                ]}
-                              >
-                                <Text
-                                  style={[
-                                    styles.chipText,
-                                    selected ? styles.chipTextSelected : styles.chipTextIdle
-                                  ]}
-                                >
-                                  {humanizeEnum(option)}
-                                </Text>
-                              </Pressable>
-                            );
-                          })}
+                    {titleField ? (
+                      <View style={styles.editFieldBlock}>
+                        <Text style={styles.editFieldLabel}>Title</Text>
+                        <TextInput
+                          autoCapitalize="words"
+                          placeholder="Closet item title"
+                          placeholderTextColor="#9CA3AF"
+                          style={styles.textField}
+                          value={draftTitle}
+                          onChangeText={setDraftTitle}
+                        />
+                        <View style={styles.actionPillRow}>
+                          <Pressable
+                            onPress={() => saveTextField("title", draftTitle)}
+                            style={({ pressed }) => [
+                              styles.actionPill,
+                              styles.actionPillPrimary,
+                              pressed ? styles.pressed : null
+                            ]}
+                          >
+                            <Text style={[styles.actionPillLabel, styles.actionPillLabelPrimary]}>Save</Text>
+                          </Pressable>
+                          {titleField.field.suggested_state ? (
+                            <Pressable
+                              onPress={() =>
+                                queueFieldAction("title", {
+                                  field_name: "title",
+                                  operation: "accept_suggestion"
+                                })
+                              }
+                              style={({ pressed }) => [styles.actionPill, pressed ? styles.pressed : null]}
+                            >
+                              <Text style={styles.actionPillLabel}>Use suggestion</Text>
+                            </Pressable>
+                          ) : null}
+                          <Pressable
+                            onPress={() =>
+                              queueFieldAction("title", {
+                                field_name: "title",
+                                operation: "clear"
+                              })
+                            }
+                            style={({ pressed }) => [styles.actionPill, pressed ? styles.pressed : null]}
+                          >
+                            <Text style={styles.actionPillLabel}>Clear</Text>
+                          </Pressable>
                         </View>
                       </View>
-                    );
-                  })}
+                    ) : null}
+
+                    {brandField ? (
+                      <View style={styles.editFieldBlock}>
+                        <Text style={styles.editFieldLabel}>Brand</Text>
+                        <TextInput
+                          autoCapitalize="words"
+                          placeholder="Brand"
+                          placeholderTextColor="#9CA3AF"
+                          style={styles.textField}
+                          value={draftBrand}
+                          onChangeText={setDraftBrand}
+                        />
+                        <View style={styles.actionPillRow}>
+                          <Pressable
+                            onPress={() => saveTextField("brand", draftBrand)}
+                            style={({ pressed }) => [
+                              styles.actionPill,
+                              styles.actionPillPrimary,
+                              pressed ? styles.pressed : null
+                            ]}
+                          >
+                            <Text style={[styles.actionPillLabel, styles.actionPillLabelPrimary]}>Save</Text>
+                          </Pressable>
+                          {brandField.field.suggested_state ? (
+                            <Pressable
+                              onPress={() =>
+                                queueFieldAction("brand", {
+                                  field_name: "brand",
+                                  operation: "accept_suggestion"
+                                })
+                              }
+                              style={({ pressed }) => [styles.actionPill, pressed ? styles.pressed : null]}
+                            >
+                              <Text style={styles.actionPillLabel}>Use suggestion</Text>
+                            </Pressable>
+                          ) : null}
+                          <Pressable
+                            onPress={() =>
+                              queueFieldAction("brand", {
+                                field_name: "brand",
+                                operation: "mark_not_applicable"
+                              })
+                            }
+                            style={({ pressed }) => [styles.actionPill, pressed ? styles.pressed : null]}
+                          >
+                            <Text style={styles.actionPillLabel}>Not applicable</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : null}
+
+                    {editableSelectionFields.map((field) => {
+                      if (field.options.length === 0) {
+                        return null;
+                      }
+
+                      const multi = fieldIsMultiValue(field.field.field_name);
+                      const selectedValues = multi
+                        ? asStringArray(field.valueSelection)
+                        : [asString(field.valueSelection) ?? ""].filter(Boolean);
+
+                      return (
+                        <View key={field.field.field_name} style={styles.editFieldBlock}>
+                          <Text style={styles.editFieldLabel}>{field.label}</Text>
+                          <View style={styles.chipsWrap}>
+                            {field.options.map((option) => {
+                              const selected = selectedValues.includes(option);
+
+                              return (
+                                <Pressable
+                                  key={option}
+                                  onPress={() => {
+                                    if (isBusy) {
+                                      return;
+                                    }
+
+                                    const nextSelection = multi
+                                      ? selected
+                                        ? selectedValues.filter((value) => value !== option)
+                                        : selectedValues.concat(option)
+                                      : [option];
+
+                                    queueFieldChange(
+                                      field.field.field_name,
+                                      multi ? nextSelection : nextSelection[0] ?? null,
+                                      nextSelection.length === 0
+                                        ? {
+                                            field_name: field.field.field_name,
+                                            operation: "clear"
+                                          }
+                                        : {
+                                            field_name: field.field.field_name,
+                                            operation: "set_value",
+                                            canonical_value: multi ? nextSelection : nextSelection[0]
+                                          }
+                                    );
+                                  }}
+                                  style={[
+                                    styles.chip,
+                                    selected ? styles.chipSelected : styles.chipIdle
+                                  ]}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.chipText,
+                                      selected ? styles.chipTextSelected : styles.chipTextIdle
+                                    ]}
+                                  >
+                                    {humanizeEnum(option)}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                          <View style={styles.actionPillRow}>
+                            {field.field.suggested_state ? (
+                              <Pressable
+                                onPress={() =>
+                                  queueFieldAction(field.field.field_name, {
+                                    field_name: field.field.field_name,
+                                    operation: "accept_suggestion"
+                                  })
+                                }
+                                style={({ pressed }) => [styles.actionPill, pressed ? styles.pressed : null]}
+                              >
+                                <Text style={styles.actionPillLabel}>Use suggestion</Text>
+                              </Pressable>
+                          ) : null}
+                          {!field.field.required ? (
+                            <Pressable
+                              onPress={() =>
+                                queueFieldAction(field.field.field_name, {
+                                  field_name: field.field.field_name,
+                                  operation: "clear"
+                                })
+                              }
+                              style={({ pressed }) => [styles.actionPill, pressed ? styles.pressed : null]}
+                            >
+                              <Text style={styles.actionPillLabel}>Clear</Text>
+                            </Pressable>
+                          ) : null}
+                            {!field.field.required ? (
+                              <Pressable
+                                onPress={() =>
+                                  queueFieldAction(field.field.field_name, {
+                                    field_name: field.field.field_name,
+                                    operation: "mark_not_applicable"
+                                  })
+                                }
+                                style={({ pressed }) => [styles.actionPill, pressed ? styles.pressed : null]}
+                              >
+                                <Text style={styles.actionPillLabel}>Not applicable</Text>
+                              </Pressable>
+                            ) : null}
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
                 </ScrollView>
 
                 <View pointerEvents="none" style={styles.bottomFade} />
@@ -1094,6 +1310,17 @@ const styles = StyleSheet.create({
   backScrollContent: {
     paddingBottom: 120
   },
+  editSections: {
+    gap: 18
+  },
+  derivedFieldCard: {
+    gap: 6,
+    padding: 16,
+    borderRadius: 18,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E5E7EB"
+  },
   editHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1135,6 +1362,56 @@ const styles = StyleSheet.create({
     color: "#6B7280",
     letterSpacing: 1.3,
     textTransform: "uppercase"
+  },
+  derivedFieldValue: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 16,
+    lineHeight: 20,
+    color: "#111827"
+  },
+  derivedFieldHelper: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 12,
+    lineHeight: 17,
+    color: "#6B7280"
+  },
+  textField: {
+    minHeight: 52,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: "#111827",
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 15
+  },
+  actionPillRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10
+  },
+  actionPill: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "#EEF0F3"
+  },
+  actionPillPrimary: {
+    backgroundColor: "#111827"
+  },
+  actionPillLabel: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 12,
+    color: "#111827"
+  },
+  actionPillLabelPrimary: {
+    color: "#FFFFFF"
+  },
+  pressed: {
+    opacity: 0.78
   },
   chipsWrap: {
     flexDirection: "row",

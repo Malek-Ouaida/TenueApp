@@ -18,6 +18,7 @@ export type ReviewFieldDescriptor = {
 };
 
 const PREFERRED_FIELD_ORDER = [
+  "title",
   "category",
   "subcategory",
   "colors",
@@ -26,7 +27,10 @@ const PREFERRED_FIELD_ORDER = [
   "brand",
   "season_tags",
   "occasion_tags",
-  "style_tags"
+  "style_tags",
+  "fit_tags",
+  "silhouette",
+  "attributes"
 ] as const;
 
 export function hasCanonicalValue(value: ClosetFieldCanonicalValue) {
@@ -83,7 +87,9 @@ export function asStringArray(value: ClosetFieldCanonicalValue): string[] {
 }
 
 export function fieldIsMultiValue(fieldName: string) {
-  return ["colors", "style_tags", "occasion_tags", "season_tags"].includes(fieldName);
+  return ["colors", "style_tags", "fit_tags", "occasion_tags", "season_tags", "attributes"].includes(
+    fieldName
+  );
 }
 
 export function formatFieldValue(value: ClosetFieldCanonicalValue): string | null {
@@ -110,6 +116,10 @@ function getFieldLabel(fieldName: string) {
       return "Season";
     case "colors":
       return "Color";
+    case "fit_tags":
+      return "Fit";
+    case "attributes":
+      return "Attributes";
     default:
       return humanizeEnum(fieldName);
   }
@@ -127,7 +137,7 @@ function getConfidenceTone(confidence: number | null | undefined): ReviewFieldDe
   return "low";
 }
 
-function selectionOptionsForField(
+export function selectionOptionsForField(
   fieldName: string,
   metadata: ClosetMetadataOptionsResponse | null,
   currentCategory: string | null
@@ -139,11 +149,13 @@ function selectionOptionsForField(
   switch (fieldName) {
     case "category":
       return metadata.categories.map((entry) => entry.name);
-    case "subcategory":
-      if (currentCategory) {
-        return metadata.categories.find((entry) => entry.name === currentCategory)?.subcategories ?? [];
-      }
-      return metadata.categories.flatMap((entry) => entry.subcategories);
+    case "subcategory": {
+      const preferredOptions = currentCategory
+        ? metadata.categories.find((entry) => entry.name === currentCategory)?.subcategories ?? []
+        : [];
+      const allOptions = metadata.categories.flatMap((entry) => entry.subcategories);
+      return Array.from(new Set(preferredOptions.concat(allOptions)));
+    }
     case "colors":
       return metadata.colors;
     case "material":
@@ -152,13 +164,35 @@ function selectionOptionsForField(
       return metadata.patterns;
     case "style_tags":
       return metadata.style_tags;
+    case "fit_tags":
+      return metadata.fit_tags;
     case "occasion_tags":
       return metadata.occasion_tags;
     case "season_tags":
       return metadata.season_tags;
+    case "silhouette":
+      return metadata.silhouettes;
+    case "attributes":
+      return metadata.attributes;
     default:
       return [];
   }
+}
+
+function describeSelectionValue(field: ClosetReviewFieldSnapshot, selectionValue: ClosetFieldCanonicalValue) {
+  if (field.current_state.applicability_state === "not_applicable") {
+    return "Not applicable";
+  }
+
+  if (field.current_state.applicability_state === "unknown" && !isSuggestedUsable(field)) {
+    return "Unknown";
+  }
+
+  return (
+    formatFieldValue(selectionValue) ??
+    formatFieldValue(field.suggested_state?.canonical_value ?? null) ??
+    "Needs review"
+  );
 }
 
 export function buildAutoAcceptChanges(review: ClosetItemReviewSnapshot | null | undefined) {
@@ -209,10 +243,7 @@ export function buildReviewFieldDescriptors(
       field,
       label: getFieldLabel(field.field_name),
       options: selectionOptionsForField(field.field_name, metadata ?? null, currentCategory),
-      value:
-        formatFieldValue(selectionValue) ??
-        formatFieldValue(field.suggested_state?.canonical_value ?? null) ??
-        "Needs review",
+      value: describeSelectionValue(field, selectionValue),
       valueSelection: selectionValue
     };
   });

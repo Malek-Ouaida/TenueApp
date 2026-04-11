@@ -14,6 +14,7 @@ import {
   authPalette,
   useAuthIntroAnimation
 } from "../src/auth/ui";
+import { supportsNativeAnimatedDriver } from "../src/lib/runtime";
 import { useProfile } from "../src/profile/hooks";
 import { fontFamilies } from "../src/theme";
 import { AppText } from "../src/ui";
@@ -47,12 +48,12 @@ export default function ProfileSetupScreen() {
         Animated.timing(avatarBreath, {
           toValue: 1,
           duration: 2000,
-          useNativeDriver: true
+          useNativeDriver: supportsNativeAnimatedDriver
         }),
         Animated.timing(avatarBreath, {
           toValue: 0,
           duration: 2000,
-          useNativeDriver: true
+          useNativeDriver: supportsNativeAnimatedDriver
         })
       ])
     );
@@ -61,12 +62,12 @@ export default function ProfileSetupScreen() {
         Animated.timing(sparkle, {
           toValue: 1,
           duration: 1000,
-          useNativeDriver: true
+          useNativeDriver: supportsNativeAnimatedDriver
         }),
         Animated.timing(sparkle, {
           toValue: 0,
           duration: 1000,
-          useNativeDriver: true
+          useNativeDriver: supportsNativeAnimatedDriver
         })
       ])
     );
@@ -75,12 +76,12 @@ export default function ProfileSetupScreen() {
         Animated.timing(orbFloat, {
           toValue: 1,
           duration: 6000,
-          useNativeDriver: true
+          useNativeDriver: supportsNativeAnimatedDriver
         }),
         Animated.timing(orbFloat, {
           toValue: 0,
           duration: 6000,
-          useNativeDriver: true
+          useNativeDriver: supportsNativeAnimatedDriver
         })
       ])
     );
@@ -151,7 +152,6 @@ export default function ProfileSetupScreen() {
           />
         </View>
       }
-      scrollable={false}
     >
       <View style={styles.page}>
         <Animated.View style={[styles.titleRow, buildFadeUpStyle(intro[0])]}>
@@ -219,25 +219,21 @@ export default function ProfileSetupScreen() {
         </Animated.View>
 
         <View style={styles.formBlock}>
-          <Animated.View style={buildFadeUpStyle(intro[2])}>
-            <AuthTextField
-              autoCapitalize="none"
-              autoCorrect={false}
-              label="Username"
-              placeholder="@yourname"
-              value={username}
-              onChangeText={setUsername}
-            />
-          </Animated.View>
+          <AuthTextField
+            autoCapitalize="none"
+            autoCorrect={false}
+            label="Username"
+            placeholder="@yourname"
+            value={username}
+            onChangeText={setUsername}
+          />
 
-          <Animated.View style={buildFadeUpStyle(intro[3])}>
-            <AuthTextField
-              label="Display name"
-              placeholder="Your name"
-              value={displayName}
-              onChangeText={setDisplayName}
-            />
-          </Animated.View>
+          <AuthTextField
+            label="Display name"
+            placeholder="Your name"
+            value={displayName}
+            onChangeText={setDisplayName}
+          />
 
           <Animated.View style={buildFadeUpStyle(intro[4], 10)}>
             <AppText color={authPalette.subtle} style={styles.microcopy}>
@@ -270,7 +266,7 @@ export default function ProfileSetupScreen() {
 
 const styles = StyleSheet.create({
   page: {
-    flex: 1
+    flexGrow: 1
   },
   topAccent: {
     position: "absolute",

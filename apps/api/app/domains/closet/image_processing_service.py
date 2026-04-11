@@ -439,7 +439,7 @@ class ClosetImageProcessingService:
             pass
 
     def _can_reprocess(self, *, item: ClosetItem) -> bool:
-        if item.lifecycle_status in {LifecycleStatus.CONFIRMED, LifecycleStatus.ARCHIVED}:
+        if item.lifecycle_status == LifecycleStatus.ARCHIVED:
             return False
         if not self.repository.has_active_primary_image(item=item):
             return False
@@ -449,7 +449,7 @@ class ClosetImageProcessingService:
         )
 
     def _ensure_item_can_reprocess(self, item: ClosetItem) -> None:
-        if item.lifecycle_status in {LifecycleStatus.CONFIRMED, LifecycleStatus.ARCHIVED}:
+        if item.lifecycle_status == LifecycleStatus.ARCHIVED:
             raise build_error(INVALID_LIFECYCLE_TRANSITION)
         if not self.repository.has_active_primary_image(item=item):
             raise build_error(MISSING_PRIMARY_IMAGE)

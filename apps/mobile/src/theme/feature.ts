@@ -1,6 +1,7 @@
 import { StyleSheet } from "react-native";
 
-import { colors, fontFamilies } from "../theme";
+import { colors } from "./tokens";
+import { fontFamilies } from "./typography";
 
 export const featurePalette = {
   background: colors.cream,

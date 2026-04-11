@@ -132,6 +132,8 @@ export function ReviewDeckScreen({
   const [notice, setNotice] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [optimisticValues, setOptimisticValues] = useState<Record<string, ClosetFieldCanonicalValue>>({});
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftBrand, setDraftBrand] = useState("");
   const [pendingSaveCount, setPendingSaveCount] = useState(0);
   const hasPendingSaves = pendingSaveCount > 0;
 
@@ -180,6 +182,12 @@ export function ReviewDeckScreen({
     (reviewFlow.processing ? getReviewItemPreview(reviewFlow.processing)?.url : undefined) ??
     (currentDraft ? getDraftPrimaryImage(currentDraft)?.url : undefined) ??
     undefined;
+  const categoryField = displayedFields.find((field) => field.field.field_name === "category") ?? null;
+  const titleField = displayedFields.find((field) => field.field.field_name === "title") ?? null;
+  const brandField = displayedFields.find((field) => field.field.field_name === "brand") ?? null;
+  const editableSelectionFields = displayedFields.filter(
+    (field) => !["title", "brand", "category"].includes(field.field.field_name)
+  );
   const itemTitle =
     currentDraft?.title ??
     asString(displayedFields.find((field) => field.field.field_name === "subcategory")?.valueSelection ?? null) ??
@@ -224,6 +232,21 @@ export function ReviewDeckScreen({
       browser.cancelAnimationFrame?.(rafId.current as number);
     };
   }, [itemId]);
+
+  useEffect(() => {
+    setDraftTitle(
+      asString(
+        reviewFlow.review?.review_fields.find((field) => field.field_name === "title")?.current_state.canonical_value ??
+          null
+      ) ?? ""
+    );
+    setDraftBrand(
+      asString(
+        reviewFlow.review?.review_fields.find((field) => field.field_name === "brand")?.current_state.canonical_value ??
+          null
+      ) ?? ""
+    );
+  }, [reviewFlow.review?.review_version]);
 
   const applyFieldChange = useCallback(
     async (change: ClosetReviewFieldChange) => {
@@ -281,6 +304,44 @@ export function ReviewDeckScreen({
         });
     },
     [applyFieldChange]
+  );
+
+  const queueFieldAction = useCallback(
+    (fieldName: string, change: ClosetReviewFieldChange) => {
+      const nextToken = (optimisticTokensRef.current[fieldName] ?? 0) + 1;
+      optimisticTokensRef.current[fieldName] = nextToken;
+      setPendingSaveCount((current) => current + 1);
+
+      saveQueueRef.current = saveQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          await applyFieldChange(change);
+        })
+        .finally(() => {
+          setPendingSaveCount((current) => Math.max(0, current - 1));
+        });
+    },
+    [applyFieldChange]
+  );
+
+  const saveTextField = useCallback(
+    (fieldName: "title" | "brand", value: string) => {
+      const normalized = value.trim();
+      queueFieldAction(
+        fieldName,
+        normalized
+          ? {
+              field_name: fieldName,
+              operation: "set_value",
+              canonical_value: normalized
+            }
+          : {
+              field_name: fieldName,
+              operation: "clear"
+            }
+      );
+    },
+    [queueFieldAction]
   );
 
   const prepareReviewForConfirm = useCallback(async () => {
@@ -751,7 +812,105 @@ export function ReviewDeckScreen({
                 </div>
 
                 <div style={editSectionsStyle}>
-                  {displayedFields.map((field) => {
+                  {categoryField ? (
+                    <div style={derivedFieldCardStyle}>
+                      <label style={chipLabelStyle}>Category</label>
+                      <div style={derivedFieldValueStyle}>{categoryField.value}</div>
+                      <div style={derivedFieldHelperStyle}>
+                        Change subcategory to move this item into another category.
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {titleField ? (
+                    <div>
+                      <label style={chipLabelStyle}>Title</label>
+                      <input
+                        autoCapitalize="words"
+                        onChange={(event) =>
+                          setDraftTitle((event.currentTarget as { value?: string }).value ?? "")
+                        }
+                        placeholder="Closet item title"
+                        style={textInputStyle}
+                        value={draftTitle}
+                      />
+                      <div style={actionPillsStyle}>
+                        <button onClick={() => saveTextField("title", draftTitle)} style={actionPillPrimaryStyle}>
+                          Save
+                        </button>
+                        {titleField.field.suggested_state ? (
+                          <button
+                            onClick={() =>
+                              queueFieldAction("title", {
+                                field_name: "title",
+                                operation: "accept_suggestion"
+                              })
+                            }
+                            style={actionPillStyle}
+                          >
+                            Use suggestion
+                          </button>
+                        ) : null}
+                        <button
+                          onClick={() =>
+                            queueFieldAction("title", {
+                              field_name: "title",
+                              operation: "clear"
+                            })
+                          }
+                          style={actionPillStyle}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {brandField ? (
+                    <div>
+                      <label style={chipLabelStyle}>Brand</label>
+                      <input
+                        autoCapitalize="words"
+                        onChange={(event) =>
+                          setDraftBrand((event.currentTarget as { value?: string }).value ?? "")
+                        }
+                        placeholder="Brand"
+                        style={textInputStyle}
+                        value={draftBrand}
+                      />
+                      <div style={actionPillsStyle}>
+                        <button onClick={() => saveTextField("brand", draftBrand)} style={actionPillPrimaryStyle}>
+                          Save
+                        </button>
+                        {brandField.field.suggested_state ? (
+                          <button
+                            onClick={() =>
+                              queueFieldAction("brand", {
+                                field_name: "brand",
+                                operation: "accept_suggestion"
+                              })
+                            }
+                            style={actionPillStyle}
+                          >
+                            Use suggestion
+                          </button>
+                        ) : null}
+                        <button
+                          onClick={() =>
+                            queueFieldAction("brand", {
+                              field_name: "brand",
+                              operation: "mark_not_applicable"
+                            })
+                          }
+                          style={actionPillStyle}
+                        >
+                          Not applicable
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {editableSelectionFields.map((field) => {
                     if (field.options.length === 0) {
                       return null;
                     }
@@ -803,6 +962,47 @@ export function ReviewDeckScreen({
                               </button>
                             );
                           })}
+                        </div>
+                        <div style={actionPillsStyle}>
+                          {field.field.suggested_state ? (
+                            <button
+                              onClick={() =>
+                                queueFieldAction(field.field.field_name, {
+                                  field_name: field.field.field_name,
+                                  operation: "accept_suggestion"
+                                })
+                              }
+                              style={actionPillStyle}
+                            >
+                              Use suggestion
+                            </button>
+                          ) : null}
+                          {!field.field.required ? (
+                            <button
+                              onClick={() =>
+                                queueFieldAction(field.field.field_name, {
+                                  field_name: field.field.field_name,
+                                  operation: "clear"
+                                })
+                              }
+                              style={actionPillStyle}
+                            >
+                              Clear
+                            </button>
+                          ) : null}
+                          {!field.field.required ? (
+                            <button
+                              onClick={() =>
+                                queueFieldAction(field.field.field_name, {
+                                  field_name: field.field.field_name,
+                                  operation: "mark_not_applicable"
+                                })
+                              }
+                              style={actionPillStyle}
+                            >
+                              Not applicable
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -1164,6 +1364,29 @@ const editSectionsStyle: CSSProperties = {
   paddingBottom: 120
 };
 
+const derivedFieldCardStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+  padding: 16,
+  borderRadius: 18,
+  border: "1px solid #E5E7EB",
+  background: "#F8FAFC"
+};
+
+const derivedFieldValueStyle: CSSProperties = {
+  fontFamily: webSansSemiBold,
+  fontSize: 16,
+  lineHeight: "20px",
+  color: palette.foreground
+};
+
+const derivedFieldHelperStyle: CSSProperties = {
+  fontFamily: webSansRegular,
+  fontSize: 12,
+  lineHeight: "17px",
+  color: palette.muted
+};
+
 const chipLabelStyle: CSSProperties = {
   display: "block",
   marginBottom: 10,
@@ -1173,6 +1396,44 @@ const chipLabelStyle: CSSProperties = {
   color: palette.muted,
   letterSpacing: 1.3,
   textTransform: "uppercase"
+};
+
+const textInputStyle: CSSProperties = {
+  width: "100%",
+  minHeight: 52,
+  borderRadius: 18,
+  border: "1px solid #E5E7EB",
+  background: "#FFFFFF",
+  padding: "14px 16px",
+  color: palette.foreground,
+  fontFamily: webSansSemiBold,
+  fontSize: 15,
+  lineHeight: "20px"
+};
+
+const actionPillsStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  marginTop: 10
+};
+
+const actionPillStyle: CSSProperties = {
+  border: "none",
+  borderRadius: 999,
+  padding: "8px 12px",
+  background: "#EEF0F3",
+  color: palette.foreground,
+  fontFamily: webSansSemiBold,
+  fontSize: 12,
+  lineHeight: "16px",
+  cursor: "pointer"
+};
+
+const actionPillPrimaryStyle: CSSProperties = {
+  ...actionPillStyle,
+  background: palette.foreground,
+  color: "#FFFFFF"
 };
 
 const chipsWrapStyle: CSSProperties = {

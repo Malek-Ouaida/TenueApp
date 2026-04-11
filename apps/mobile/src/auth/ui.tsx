@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { supportsNativeAnimatedDriver } from "../lib/runtime";
 import { colors, fontFamilies } from "../theme";
 import { AppText } from "../ui";
 
@@ -89,7 +90,7 @@ export function AuthScreen({
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <StatusBar style="dark" />
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" && !scrollable ? "padding" : undefined}
         style={styles.page}
       >
         {backgroundDecor ? (
@@ -99,9 +100,11 @@ export function AuthScreen({
         ) : null}
         {scrollable ? (
           <ScrollView
+            automaticallyAdjustKeyboardInsets
             bounces={false}
             contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
             style={styles.flex}
           >
@@ -154,49 +157,20 @@ export function AuthTextField({
   helper,
   label,
   leftIcon,
-  onBlur,
-  onFocus,
   rightAccessory,
   style,
   ...props
 }: AuthTextFieldProps) {
-  const [focused, setFocused] = useState(false);
-  const labelColor = error
-    ? colors.danger
-    : focused
-      ? authPalette.accent
-      : authPalette.muted;
-  const borderColor = error
-    ? colors.danger
-    : focused
-      ? authPalette.accent
-      : authPalette.border;
-
-  function handleFocus(event: Parameters<NonNullable<TextInputProps["onFocus"]>>[0]) {
-    setFocused(true);
-    onFocus?.(event);
-  }
-
-  function handleBlur(event: Parameters<NonNullable<TextInputProps["onBlur"]>>[0]) {
-    setFocused(false);
-    onBlur?.(event);
-  }
+  const labelColor = error ? colors.danger : authPalette.muted;
+  const borderColor = error ? colors.danger : authPalette.border;
 
   return (
     <View style={[styles.fieldRoot, containerStyle]}>
       <AppText style={[styles.fieldLabel, { color: labelColor }]}>{label}</AppText>
-      <View
-        style={[
-          styles.inputShell,
-          { borderColor },
-          focused ? styles.inputShellFocused : null
-        ]}
-      >
+      <View style={[styles.inputShell, { borderColor }]}>
         {leftIcon ? <View style={styles.leadingAccessory}>{leftIcon}</View> : null}
         <TextInput
           {...props}
-          onBlur={handleBlur}
-          onFocus={handleFocus}
           placeholderTextColor={authPalette.subtle}
           style={[
             styles.input,
@@ -295,7 +269,7 @@ export function useAuthIntroAnimation(count: number) {
             toValue: 1,
             duration: 560,
             easing: Easing.bezier(0.32, 0.72, 0, 1),
-            useNativeDriver: true
+            useNativeDriver: supportsNativeAnimatedDriver
           })
         )
       ).start();
@@ -419,13 +393,6 @@ const styles = StyleSheet.create({
     backgroundColor: authPalette.surface,
     flexDirection: "row",
     alignItems: "center"
-  },
-  inputShellFocused: {
-    shadowColor: authPalette.accent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 2
   },
   leadingAccessory: {
     paddingLeft: 16

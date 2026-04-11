@@ -2,10 +2,12 @@ export const CATEGORY_LABELS: Record<string, string> = {
   tops: "Tops",
   bottoms: "Bottoms",
   dresses: "Dresses",
+  one_piece: "One-Piece",
   outerwear: "Outerwear",
   shoes: "Shoes",
   bags: "Bags",
-  accessories: "Accessories"
+  accessories: "Accessories",
+  jewelry: "Jewelry"
 };
 
 export function formatDaysAgo(days: number | null) {

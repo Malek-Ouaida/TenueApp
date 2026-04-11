@@ -23,7 +23,7 @@ export default function ForgotPasswordScreen() {
   const isValid = email.includes("@");
 
   return (
-    <AuthScreen scrollable={false}>
+    <AuthScreen>
       <View style={styles.page}>
       <Animated.View style={buildFadeUpStyle(intro[0], -8)}>
         <AuthBackButton onPress={() => router.back()} variant="surface" />
@@ -38,7 +38,7 @@ export default function ForgotPasswordScreen() {
             </AppText>
           </Animated.View>
 
-          <Animated.View style={[styles.formBlock, buildFadeUpStyle(intro[2])]}>
+          <View style={styles.formBlock}>
             <AuthTextField
               autoCapitalize="none"
               autoComplete="email"
@@ -49,7 +49,7 @@ export default function ForgotPasswordScreen() {
               value={email}
               onChangeText={setEmail}
             />
-          </Animated.View>
+          </View>
 
           <Animated.View style={[styles.ctaBlock, buildFadeUpStyle(intro[3], 20)]}>
             <AuthPrimaryButton
@@ -89,7 +89,7 @@ export default function ForgotPasswordScreen() {
 
 const styles = StyleSheet.create({
   page: {
-    flex: 1
+    flexGrow: 1
   },
   titleBlock: {
     marginTop: 28,

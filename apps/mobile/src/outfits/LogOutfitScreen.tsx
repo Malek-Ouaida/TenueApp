@@ -1,6 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams, type Href } from "expo-router";
+import type { ImagePickerAsset } from "expo-image-picker";
 import {
   useCallback,
   useEffect,
@@ -17,28 +18,134 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { useAuth } from "../auth/provider";
+import { useConfirmedClosetBrowse } from "../closet/hooks";
+import {
+  prepareUploadAsset,
+  selectSingleImage,
+  uploadFileToPresignedUrl
+} from "../closet/upload";
+import { humanizeEnum } from "../lib/format";
+import { formatProfileReviewDate } from "../lib/reference/wardrobe";
 import { useOutfits } from "../outfits/provider";
 import { AppText } from "../ui";
-import { CLOSET_ITEMS, CATEGORY_LABELS, type ClosetItem, formatProfileReviewDate } from "../lib/reference/wardrobe";
 import { GlassIconButton, PrimaryActionButton } from "../ui/feature-components";
-import { launchCameraForSingleImage } from "../media/picker";
+import { supportsNativeAnimatedDriver } from "../lib/runtime";
 import { featurePalette, featureShadows, featureTypography } from "../theme/feature";
+import { completeWearUpload, createWearLog, createWearUploadIntent } from "../wear/client";
+import { formatLocalDate, getLocalTimeZone } from "../wear/dates";
+import type { WearItemRoleValue } from "../wear/types";
 
-type LogStep = "processing" | "closet" | "review" | "success";
+type LogStep = "processing" | "closet" | "review";
 
-function pickRandomItems(count: number) {
-  return [...CLOSET_ITEMS].sort(() => Math.random() - 0.5).slice(0, count);
+type ClosetSelectionItem = {
+  id: string;
+  title: string | null;
+  category: string | null;
+  subcategory: string | null;
+  primaryColor: string | null;
+  imageUri: string | null;
+  thumbnailUri: string | null;
+};
+
+function mapCategoryToWearRole(category: string | null | undefined): WearItemRoleValue {
+  switch (category) {
+    case "top":
+    case "tops":
+      return "top";
+    case "bottom":
+    case "bottoms":
+      return "bottom";
+    case "dress":
+    case "dresses":
+      return "dress";
+    case "outerwear":
+      return "outerwear";
+    case "shoes":
+      return "shoes";
+    case "bag":
+    case "bags":
+      return "bag";
+    case "accessories":
+    case "accessory":
+      return "accessory";
+    default:
+      return "other";
+  }
 }
 
 export default function LogOutfitScreen() {
   const { mode } = useLocalSearchParams<{ mode?: string }>();
-  const { consumeLogOutfitPhotoUri, upsertOutfit } = useOutfits();
+  const { session } = useAuth();
+  const { consumeLogOutfitPhotoAsset } = useOutfits();
+  const closet = useConfirmedClosetBrowse(session?.access_token, { include_archived: false }, 100);
   const [step, setStep] = useState<LogStep>(
     mode === "photo" ? "processing" : "closet"
   );
-  const [selectedItems, setSelectedItems] = useState<ClosetItem[]>([]);
+  const [selectedItems, setSelectedItems] = useState<ClosetSelectionItem[]>([]);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const autoTriggered = useRef(false);
+
+  const closetItems = useMemo<ClosetSelectionItem[]>(
+    () =>
+      closet.items.map((item) => ({
+        id: item.item_id,
+        title: item.title,
+        category: item.category,
+        subcategory: item.subcategory,
+        primaryColor: item.primary_color,
+        imageUri: item.display_image?.url ?? item.thumbnail_image?.url ?? null,
+        thumbnailUri: item.thumbnail_image?.url ?? item.display_image?.url ?? null
+      })),
+    [closet.items]
+  );
+
+  const processPhotoAsset = useCallback(
+    async (asset: ImagePickerAsset) => {
+      if (!session?.access_token) {
+        setError("Sign in again to create a wear event.");
+        return;
+      }
+
+      setPhotoUri(asset.uri ?? null);
+      setStep("processing");
+      setError(null);
+      setIsSubmitting(true);
+
+      try {
+        const wearLog = await createWearLog(session.access_token, {
+          mode: "photo_upload",
+          wear_date: formatLocalDate(new Date()),
+          worn_at: new Date().toISOString(),
+          timezone_name: getLocalTimeZone()
+        });
+        const preparedAsset = await prepareUploadAsset(asset);
+        const uploadIntent = await createWearUploadIntent(session.access_token, wearLog.id, {
+          filename: preparedAsset.filename,
+          mime_type: preparedAsset.mime_type,
+          file_size: preparedAsset.file_size,
+          sha256: preparedAsset.sha256
+        });
+
+        await uploadFileToPresignedUrl(preparedAsset, uploadIntent.upload);
+
+        const completedWearLog = await completeWearUpload(
+          session.access_token,
+          wearLog.id,
+          uploadIntent.upload_intent_id
+        );
+
+        router.replace(`/wear/${completedWearLog.id}` as Href);
+      } catch (uploadError) {
+        setError(uploadError instanceof Error ? uploadError.message : "Wear photo upload failed.");
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [session?.access_token]
+  );
 
   useEffect(() => {
     if (mode !== "photo" || autoTriggered.current) {
@@ -46,50 +153,54 @@ export default function LogOutfitScreen() {
     }
 
     autoTriggered.current = true;
-    const storedUri = consumeLogOutfitPhotoUri();
-    if (!storedUri) {
-      setStep("closet");
+    const storedAsset = consumeLogOutfitPhotoAsset();
+    if (!storedAsset) {
+      setError("Take a photo to start a wear event.");
+      setIsSubmitting(false);
       return;
     }
 
-    setPhotoUri(storedUri);
-    setStep("processing");
-
-    const timer = setTimeout(() => {
-      setSelectedItems(pickRandomItems(3));
-      setStep("review");
-    }, 2400);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [consumeLogOutfitPhotoUri, mode]);
+    void processPhotoAsset(storedAsset);
+  }, [consumeLogOutfitPhotoAsset, mode, processPhotoAsset]);
 
   const handleManualPhoto = useCallback(async () => {
-    const uri = await launchCameraForSingleImage();
-    if (!uri) {
+    const asset = await selectSingleImage("camera");
+    if (!asset) {
       return;
     }
 
-    setPhotoUri(uri);
-    setStep("processing");
+    void processPhotoAsset(asset);
+  }, [processPhotoAsset]);
 
-    setTimeout(() => {
-      setSelectedItems(pickRandomItems(3));
-      setStep("review");
-    }, 2400);
-  }, []);
+  const handleConfirm = useCallback(async () => {
+    if (!session?.access_token || selectedItems.length === 0) {
+      return;
+    }
 
-  const handleConfirm = useCallback(() => {
-    const today = new Date();
-    upsertOutfit(today.toISOString().split("T")[0] ?? "", {
-      image: selectedItems[0]?.image ?? null,
-      imageUri: photoUri,
-      items: selectedItems,
-      note: undefined
-    });
-    setStep("success");
-  }, [photoUri, selectedItems, upsertOutfit]);
+    setError(null);
+    setIsSubmitting(true);
+
+    try {
+      const wearLog = await createWearLog(session.access_token, {
+        mode: "manual_items",
+        wear_date: formatLocalDate(new Date()),
+        worn_at: new Date().toISOString(),
+        timezone_name: getLocalTimeZone(),
+        items: selectedItems.map((item, index) => ({
+          closet_item_id: item.id,
+          role: mapCategoryToWearRole(item.category),
+          sort_index: index,
+          source: "manual"
+        }))
+      });
+
+      router.replace(`/wear/${wearLog.id}` as Href);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Wear log could not be created.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [selectedItems, session?.access_token]);
 
   const handleBack = useCallback(() => {
     if (step === "closet" || step === "processing") {
@@ -106,13 +217,27 @@ export default function LogOutfitScreen() {
   }, [step]);
 
   if (step === "processing") {
-    return <LogOutfitProcessing imageUri={photoUri} onFallbackPhoto={handleManualPhoto} />;
+    return (
+      <LogOutfitProcessing
+        error={error}
+        imageUri={photoUri}
+        isWorking={isSubmitting}
+        onFallbackPhoto={handleManualPhoto}
+        onUseCloset={() => {
+          setError(null);
+          setStep("closet");
+        }}
+      />
+    );
   }
 
   if (step === "closet") {
     return (
       <LogOutfitClosetPick
+        error={closet.error}
         initialItems={selectedItems}
+        isLoading={closet.isLoading}
+        items={closetItems}
         onBack={handleBack}
         onConfirm={(items) => {
           setSelectedItems(items);
@@ -125,7 +250,9 @@ export default function LogOutfitScreen() {
   if (step === "review") {
     return (
       <LogOutfitReview
+        error={error}
         items={selectedItems}
+        isSubmitting={isSubmitting}
         onBack={handleBack}
         onConfirm={handleConfirm}
         onRemoveItem={(id) => {
@@ -135,24 +262,34 @@ export default function LogOutfitScreen() {
     );
   }
 
-  return <LogOutfitSuccess onDone={() => router.push("/" as Href)} />;
+  return null;
 }
 
 function LogOutfitProcessing({
+  error,
   imageUri,
-  onFallbackPhoto
+  isWorking,
+  onFallbackPhoto,
+  onUseCloset
 }: {
+  error: string | null;
   imageUri: string | null;
+  isWorking: boolean;
   onFallbackPhoto: () => void | Promise<void>;
+  onUseCloset: () => void;
 }) {
   const rotation = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (!isWorking) {
+      return;
+    }
+
     const loop = Animated.loop(
       Animated.timing(rotation, {
         toValue: 1,
         duration: 1800,
-        useNativeDriver: true
+        useNativeDriver: supportsNativeAnimatedDriver
       })
     );
 
@@ -160,7 +297,7 @@ function LogOutfitProcessing({
     return () => {
       loop.stop();
     };
-  }, [rotation]);
+  }, [isWorking, rotation]);
 
   return (
     <SafeAreaView style={styles.processingScreen}>
@@ -179,58 +316,94 @@ function LogOutfitProcessing({
           </Pressable>
         ) : null}
 
-        <View style={styles.processingSpinnerShell}>
-          <Animated.View
-            style={[
-              styles.processingSpinner,
-              {
-                transform: [
-                  {
-                    rotate: rotation.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: ["0deg", "360deg"]
-                    })
-                  }
-                ]
-              }
-            ]}
-          />
-          <View style={[styles.processingSpinnerCore, featureShadows.md]}>
-            <View style={styles.processingCoreDot} />
+        {error ? (
+          <View style={[styles.processingErrorCard, featureShadows.lg]}>
+            <AppText style={styles.processingTitle}>Wear log could not start</AppText>
+            <AppText style={styles.processingSubtitle}>{error}</AppText>
+            <View style={styles.processingErrorActions}>
+              <PrimaryActionButton
+                label="Try Photo Again"
+                onPress={() => void onFallbackPhoto()}
+              />
+              <Pressable onPress={onUseCloset} style={styles.processingSecondaryButton}>
+                <AppText style={styles.processingSecondaryButtonLabel}>Pick from closet instead</AppText>
+              </Pressable>
+            </View>
           </View>
-        </View>
+        ) : (
+          <>
+            <View style={styles.processingSpinnerShell}>
+              <Animated.View
+                style={[
+                  styles.processingSpinner,
+                  {
+                    transform: [
+                      {
+                        rotate: rotation.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ["0deg", "360deg"]
+                        })
+                      }
+                    ]
+                  }
+                ]}
+              />
+              <View style={[styles.processingSpinnerCore, featureShadows.md]}>
+                <View style={styles.processingCoreDot} />
+              </View>
+            </View>
 
-        <AppText style={styles.processingTitle}>Analyzing your outfit…</AppText>
-        <AppText style={styles.processingSubtitle}>Detecting items and colors</AppText>
+            <AppText style={styles.processingTitle}>Analyzing your outfit…</AppText>
+            <AppText style={styles.processingSubtitle}>
+              Uploading the photo and preparing a wear event for review.
+            </AppText>
+          </>
+        )}
       </View>
     </SafeAreaView>
   );
 }
 
 function LogOutfitClosetPick({
+  error,
   initialItems,
+  isLoading,
+  items,
   onBack,
   onConfirm
 }: {
-  initialItems: ClosetItem[];
+  error: string | null;
+  initialItems: ClosetSelectionItem[];
+  isLoading: boolean;
+  items: ClosetSelectionItem[];
   onBack: () => void;
-  onConfirm: (items: ClosetItem[]) => void;
+  onConfirm: (items: ClosetSelectionItem[]) => void;
 }) {
   const [activeCategory, setActiveCategory] = useState("all");
-  const [selected, setSelected] = useState<Set<number>>(
+  const [selected, setSelected] = useState<Set<string>>(
     () => new Set(initialItems.map((item) => item.id))
   );
 
-  const categories = useMemo(() => ["all", ...Object.keys(CATEGORY_LABELS)], []);
+  const categories = useMemo(
+    () => [
+      "all",
+      ...items
+        .map((item) => item.category)
+        .filter((value): value is string => Boolean(value))
+        .filter((value, index, values) => values.indexOf(value) === index)
+    ],
+    [items]
+  );
+
   const filtered = useMemo(
     () =>
       activeCategory === "all"
-        ? CLOSET_ITEMS
-        : CLOSET_ITEMS.filter((item) => item.category === activeCategory),
-    [activeCategory]
+        ? items
+        : items.filter((item) => item.category === activeCategory),
+    [activeCategory, items]
   );
 
-  function toggle(id: number) {
+  function toggle(id: string) {
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(id)) {
@@ -278,7 +451,7 @@ function LogOutfitClosetPick({
                   active ? styles.categoryChipLabelActive : null
                 ]}
               >
-                {category === "all" ? "All" : CATEGORY_LABELS[category]}
+                {category === "all" ? "All" : humanizeEnum(category)}
               </AppText>
             </Pressable>
           );
@@ -290,36 +463,63 @@ function LogOutfitClosetPick({
         contentContainerStyle={styles.closetGrid}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.tileGrid}>
-          {filtered.map((item) => {
-            const isSelected = selected.has(item.id);
+        {error ? (
+          <View style={styles.inlineNoticeCard}>
+            <AppText style={styles.inlineNoticeTitle}>Closet could not load</AppText>
+            <AppText style={styles.inlineNoticeBody}>{error}</AppText>
+          </View>
+        ) : null}
 
-            return (
-              <Pressable
-                key={item.id}
-                onPress={() => toggle(item.id)}
-                style={[
-                  styles.closetTile,
-                  isSelected ? styles.closetTileSelected : null
-                ]}
-              >
-                <Image contentFit="cover" source={item.image} style={styles.closetTileImage} />
-                {isSelected ? (
-                  <View style={styles.closetSelectionOverlay}>
-                    <View style={styles.closetSelectionBadge}>
-                      <Feather color="#FFFFFF" name="check" size={14} />
+        {isLoading ? (
+          <View style={styles.inlineNoticeCard}>
+            <AppText style={styles.inlineNoticeTitle}>Loading your closet</AppText>
+            <AppText style={styles.inlineNoticeBody}>Preparing confirmed items for wear logging.</AppText>
+          </View>
+        ) : filtered.length === 0 ? (
+          <View style={styles.inlineNoticeCard}>
+            <AppText style={styles.inlineNoticeTitle}>No confirmed items yet</AppText>
+            <AppText style={styles.inlineNoticeBody}>
+              Confirm closet items first so Tenue can attach them to a wear event.
+            </AppText>
+          </View>
+        ) : (
+          <View style={styles.tileGrid}>
+            {filtered.map((item) => {
+              const isSelected = selected.has(item.id);
+
+              return (
+                <Pressable
+                  key={item.id}
+                  onPress={() => toggle(item.id)}
+                  style={[
+                    styles.closetTile,
+                    isSelected ? styles.closetTileSelected : null
+                  ]}
+                >
+                  {item.imageUri ? (
+                    <Image contentFit="cover" source={{ uri: item.imageUri }} style={styles.closetTileImage} />
+                  ) : (
+                    <View style={styles.closetTilePlaceholder}>
+                      <Feather color={featurePalette.muted} name="image" size={20} />
                     </View>
+                  )}
+                  {isSelected ? (
+                    <View style={styles.closetSelectionOverlay}>
+                      <View style={styles.closetSelectionBadge}>
+                        <Feather color="#FFFFFF" name="check" size={14} />
+                      </View>
+                    </View>
+                  ) : null}
+                  <View style={styles.closetTileLabelGradient}>
+                    <AppText numberOfLines={2} style={styles.closetTileLabel}>
+                      {item.title ?? "Closet item"}
+                    </AppText>
                   </View>
-                ) : null}
-                <View style={styles.closetTileLabelGradient}>
-                  <AppText numberOfLines={2} style={styles.closetTileLabel}>
-                    {item.title}
-                  </AppText>
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
       </ScrollView>
 
       {selected.size > 0 ? (
@@ -327,7 +527,7 @@ function LogOutfitClosetPick({
           <PrimaryActionButton
             label={`Continue with ${selected.size} ${selected.size === 1 ? "item" : "items"}`}
             onPress={() => {
-              onConfirm(CLOSET_ITEMS.filter((item) => selected.has(item.id)));
+              onConfirm(items.filter((item) => selected.has(item.id)));
             }}
           />
         </View>
@@ -337,15 +537,19 @@ function LogOutfitClosetPick({
 }
 
 function LogOutfitReview({
+  error,
   items,
+  isSubmitting,
   onBack,
   onConfirm,
   onRemoveItem
 }: {
-  items: ClosetItem[];
+  error: string | null;
+  items: ClosetSelectionItem[];
+  isSubmitting: boolean;
   onBack: () => void;
   onConfirm: () => void;
-  onRemoveItem: (id: number) => void;
+  onRemoveItem: (id: string) => void;
 }) {
   return (
     <SafeAreaView style={styles.flowScreen}>
@@ -365,16 +569,31 @@ function LogOutfitReview({
       >
         <AppText style={styles.reviewDate}>{formatProfileReviewDate(new Date())}</AppText>
 
+        {error ? (
+          <View style={styles.inlineNoticeCard}>
+            <AppText style={styles.inlineNoticeTitle}>Wear log could not save</AppText>
+            <AppText style={styles.inlineNoticeBody}>{error}</AppText>
+          </View>
+        ) : null}
+
         <View style={styles.reviewList}>
           {items.map((item) => (
             <View key={item.id} style={[styles.reviewCard, featureShadows.sm]}>
-              <Image contentFit="cover" source={item.image} style={styles.reviewCardImage} />
+              {item.imageUri ? (
+                <Image contentFit="cover" source={{ uri: item.imageUri }} style={styles.reviewCardImage} />
+              ) : (
+                <View style={[styles.reviewCardImage, styles.reviewCardPlaceholder]}>
+                  <Feather color={featurePalette.muted} name="image" size={18} />
+                </View>
+              )}
               <View style={styles.reviewCardCopy}>
                 <AppText numberOfLines={1} style={styles.reviewCardTitle}>
-                  {item.title}
+                  {item.title ?? "Closet item"}
                 </AppText>
                 <AppText style={styles.reviewCardSubtitle}>
-                  {item.color} · {item.type}
+                  {[item.primaryColor, humanizeEnum(item.subcategory ?? item.category ?? "closet item")]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </AppText>
               </View>
               <Pressable onPress={() => onRemoveItem(item.id)} style={styles.reviewRemoveButton}>
@@ -391,7 +610,17 @@ function LogOutfitReview({
               <View style={styles.reviewPreviewRow}>
                 {items.map((item) => (
                   <View key={item.id} style={[styles.reviewPreviewCard, featureShadows.sm]}>
-                    <Image contentFit="cover" source={item.image} style={styles.reviewPreviewImage} />
+                    {item.thumbnailUri || item.imageUri ? (
+                      <Image
+                        contentFit="cover"
+                        source={{ uri: item.thumbnailUri ?? item.imageUri ?? "" }}
+                        style={styles.reviewPreviewImage}
+                      />
+                    ) : (
+                      <View style={[styles.reviewPreviewImage, styles.reviewCardPlaceholder]}>
+                        <Feather color={featurePalette.muted} name="image" size={18} />
+                      </View>
+                    )}
                   </View>
                 ))}
               </View>
@@ -402,74 +631,11 @@ function LogOutfitReview({
 
       <View style={styles.bottomCtaShell}>
         <PrimaryActionButton
-          disabled={items.length === 0}
-          label="Log Outfit"
+          disabled={items.length === 0 || isSubmitting}
+          label={isSubmitting ? "Saving…" : "Log Outfit"}
           onPress={onConfirm}
         />
       </View>
-    </SafeAreaView>
-  );
-}
-
-function LogOutfitSuccess({ onDone }: { onDone: () => void }) {
-  const [showToast, setShowToast] = useState(false);
-  const scale = useRef(new Animated.Value(0)).current;
-  const titleOpacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.spring(scale, {
-      toValue: 1,
-      damping: 12,
-      mass: 0.9,
-      stiffness: 200,
-      useNativeDriver: true
-    }).start();
-
-    Animated.timing(titleOpacity, {
-      toValue: 1,
-      duration: 320,
-      useNativeDriver: true
-    }).start();
-
-    const toastTimer = setTimeout(() => {
-      setShowToast(true);
-    }, 1200);
-    const doneTimer = setTimeout(onDone, 2600);
-
-    return () => {
-      clearTimeout(doneTimer);
-      clearTimeout(toastTimer);
-    };
-  }, [onDone, scale, titleOpacity]);
-
-  return (
-    <SafeAreaView style={styles.successScreen}>
-      <Animated.View style={[styles.successCircleShell, { transform: [{ scale }] }]}>
-        <View style={styles.successGlow} />
-        <View style={styles.successCircle}>
-          <Feather color={featurePalette.foreground} name="check" size={36} />
-        </View>
-      </Animated.View>
-
-      <Animated.View style={{ opacity: titleOpacity }}>
-        <AppText style={styles.successTitle}>Outfit logged ✨</AppText>
-        <AppText style={styles.successSubtitle}>Your style story continues</AppText>
-      </Animated.View>
-
-      <View style={styles.successSyncRow}>
-        {["Calendar", "Stats", "Closet"].map((label) => (
-          <View key={label} style={styles.successSyncChip}>
-            <AppText style={styles.successSyncLabel}>✓ {label}</AppText>
-          </View>
-        ))}
-      </View>
-
-      {showToast ? (
-        <View style={[styles.syncToast, featureShadows.md]}>
-          <AppText style={styles.syncToastTitle}>Profile updated</AppText>
-          <AppText style={styles.syncToastDescription}>Calendar and stats synced ✨</AppText>
-        </View>
-      ) : null}
     </SafeAreaView>
   );
 }
@@ -546,6 +712,31 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20
   },
+  processingErrorCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 24,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    gap: 12
+  },
+  processingErrorActions: {
+    gap: 10,
+    marginTop: 4
+  },
+  processingSecondaryButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: featurePalette.secondary
+  },
+  processingSecondaryButtonLabel: {
+    ...featureTypography.bodyStrong,
+    fontSize: 13
+  },
   flowScreen: {
     flex: 1,
     backgroundColor: featurePalette.background
@@ -595,6 +786,26 @@ const styles = StyleSheet.create({
   closetGrid: {
     flex: 1
   },
+  inlineNoticeCard: {
+    marginHorizontal: 20,
+    marginBottom: 16,
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 16,
+    paddingVertical: 14
+  },
+  inlineNoticeTitle: {
+    fontFamily: "Manrope_700Bold",
+    fontSize: 14,
+    lineHeight: 18,
+    color: featurePalette.darkText,
+    marginBottom: 4
+  },
+  inlineNoticeBody: {
+    ...featureTypography.label,
+    fontSize: 13,
+    lineHeight: 18
+  },
   tileGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -617,6 +828,13 @@ const styles = StyleSheet.create({
   closetTileImage: {
     width: "100%",
     height: "100%"
+  },
+  closetTilePlaceholder: {
+    width: "100%",
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F8F4FF"
   },
   closetSelectionOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -684,6 +902,11 @@ const styles = StyleSheet.create({
     width: 64,
     height: 80,
     borderRadius: 14
+  },
+  reviewCardPlaceholder: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: featurePalette.secondary
   },
   reviewCardCopy: {
     flex: 1

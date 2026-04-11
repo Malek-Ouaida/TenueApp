@@ -9,7 +9,9 @@ import { Platform } from "react-native";
 
 import type { ClosetDraftSnapshot } from "./types";
 import {
+  completeConfirmedClosetItemUpload,
   completeClosetUpload,
+  createConfirmedClosetItemUploadIntent,
   createClosetDraft,
   createClosetUploadIntent
 } from "./client";
@@ -575,4 +577,37 @@ export async function uploadClosetAssets(params: {
   }
 
   return drafts;
+}
+
+export async function uploadConfirmedClosetItemImage(params: {
+  accessToken: string;
+  asset: ImagePicker.ImagePickerAsset;
+  itemId: string;
+  onStageChange?: (stage: string) => void;
+}) {
+  params.onStageChange?.("Preparing image");
+  const prepared = await prepareUploadAsset(params.asset);
+
+  params.onStageChange?.("Requesting upload");
+  const uploadIntent = await createConfirmedClosetItemUploadIntent(params.accessToken, params.itemId, {
+    filename: prepared.filename,
+    mime_type: prepared.mime_type,
+    file_size: prepared.file_size,
+    sha256: prepared.sha256
+  });
+
+  params.onStageChange?.("Uploading image");
+  await uploadFileToPresignedUrl(prepared, uploadIntent.upload);
+
+  params.onStageChange?.("Completing upload");
+  const detail = await completeConfirmedClosetItemUpload(
+    params.accessToken,
+    params.itemId,
+    uploadIntent.upload_intent_id
+  );
+
+  return {
+    detail,
+    prepared
+  };
 }

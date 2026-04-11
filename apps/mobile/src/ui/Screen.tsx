@@ -43,6 +43,8 @@ export function Screen({
       <StatusBar style="dark" />
       {scrollable ? (
         <ScrollView
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           style={styles.scroll}
           contentContainerStyle={[styles.scrollContent, contentContainerStyle]}

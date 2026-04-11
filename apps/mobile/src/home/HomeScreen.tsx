@@ -13,12 +13,13 @@ import {
 } from "react-native";
 
 import { useAuth } from "../auth/provider";
+import { selectSingleImage } from "../closet/upload";
 import { useClosetInsights } from "../closet/insights";
 import { useOutfits } from "../outfits/provider";
 import { useProfile } from "../profile/hooks";
 import { AppText } from "../ui";
 import { FtueOverlay } from "../ui/feature-components";
-import { launchCameraForSingleImage } from "../media/picker";
+import { supportsNativeAnimatedDriver } from "../lib/runtime";
 import { featurePalette, featureShadows, featureTypography } from "../theme/feature";
 import { useInsightOverview } from "./overview";
 import { aiStylistPreview, homeFtueSteps, homeRecentLooks } from "./reference";
@@ -69,7 +70,7 @@ function getInitials(name: string) {
 
 export default function HomeScreen() {
   const { logoutCurrentUser, session, user } = useAuth();
-  const { outfits, setLogOutfitPhotoUri } = useOutfits();
+  const { setLogOutfitPhotoAsset } = useOutfits();
   const profile = useProfile({
     accessToken: session?.access_token,
     onUnauthorized: async () => {
@@ -91,7 +92,7 @@ export default function HomeScreen() {
           toValue: 1,
           duration: 360,
           easing: Easing.bezier(0.32, 0.72, 0, 1),
-          useNativeDriver: true
+          useNativeDriver: supportsNativeAnimatedDriver
         })
       )
     ).start();
@@ -140,12 +141,12 @@ export default function HomeScreen() {
   }
 
   async function handleHeroPhoto() {
-    const uri = await launchCameraForSingleImage();
-    if (!uri) {
+    const asset = await selectSingleImage("camera");
+    if (!asset) {
       return;
     }
 
-    setLogOutfitPhotoUri(uri);
+    setLogOutfitPhotoAsset(asset);
     router.push(({ pathname: "/log-outfit", params: { mode: "photo" } } as unknown) as Href);
   }
 
@@ -171,8 +172,8 @@ export default function HomeScreen() {
 
   const displayName = buildDisplayName(profile.profile?.display_name, user?.email);
   const avatarInitials = getInitials(displayName);
-  const outfitCount = Object.keys(outfits).length;
   const closetCount = closetInsights.insights.totalItems;
+  const wearLogCount = insightOverview.data?.all_time.total_wear_logs ?? 0;
   const streakCount = insightOverview.data?.streaks.current_streak_days ?? 0;
   const quickStats = [
     {
@@ -183,9 +184,9 @@ export default function HomeScreen() {
       icon: <MaterialCommunityIcons color="#567848" name="hanger" size={18} />
     },
     {
-      label: "Saved outfits",
-      value: `${outfitCount}`,
-      route: "/lookbook",
+      label: "Wear logs",
+      value: `${wearLogCount}`,
+      route: "/wear",
       background: "rgba(232, 219, 255, 0.35)",
       icon: <Feather color="#7658C3" name="camera" size={17} />
     },

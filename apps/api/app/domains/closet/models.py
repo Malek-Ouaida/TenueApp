@@ -185,6 +185,7 @@ class ClosetItem(Base):
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     failure_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -241,7 +242,18 @@ class ClosetItemImage(Base):
     )
     position: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_by_user_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
 
 
 class ProcessingRun(Base):
@@ -389,8 +401,11 @@ class ClosetItemMetadataProjection(Base):
     pattern: Mapped[str | None] = mapped_column(String(64), nullable=True)
     brand: Mapped[str | None] = mapped_column(String(255), nullable=True)
     style_tags: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    fit_tags: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     occasion_tags: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     season_tags: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    silhouette: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attributes: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

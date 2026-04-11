@@ -5,6 +5,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 
 import { authPalette } from "../../src/auth/ui";
+import { supportsNativeAnimatedDriver } from "../../src/lib/runtime";
 import splashLogo from "../../assets/auth/t_black.png";
 
 export default function SplashScreen() {
@@ -45,7 +46,7 @@ export default function SplashScreen() {
       toValue: 1,
       duration: 800,
       easing: Easing.bezier(0.32, 0.72, 0, 1),
-      useNativeDriver: true
+      useNativeDriver: supportsNativeAnimatedDriver
     }).start();
     const lineTimer = setTimeout(() => {
       setPhase("hold");
@@ -53,7 +54,7 @@ export default function SplashScreen() {
         toValue: 1,
         duration: 1200,
         easing: Easing.bezier(0.32, 0.72, 0, 1),
-        useNativeDriver: true
+        useNativeDriver: supportsNativeAnimatedDriver
       }).start();
     }, 80);
     const exitTimer = setTimeout(() => {
@@ -63,7 +64,7 @@ export default function SplashScreen() {
         toValue: 1,
         duration: 500,
         easing: Easing.bezier(0.32, 0.72, 0, 1),
-        useNativeDriver: true
+        useNativeDriver: supportsNativeAnimatedDriver
       }).start();
     }, 1400);
     const navTimer = setTimeout(() => {
@@ -77,13 +78,13 @@ export default function SplashScreen() {
             toValue: 1,
             duration: 6000,
             easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true
+            useNativeDriver: supportsNativeAnimatedDriver
           }),
           Animated.timing(gradientDrift, {
             toValue: 0,
             duration: 6000,
             easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true
+            useNativeDriver: supportsNativeAnimatedDriver
           })
         ])
       ),
@@ -93,13 +94,13 @@ export default function SplashScreen() {
             toValue: 1,
             duration: 7000,
             easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true
+            useNativeDriver: supportsNativeAnimatedDriver
           }),
           Animated.timing(gradientPulse, {
             toValue: 0,
             duration: 7000,
             easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true
+            useNativeDriver: supportsNativeAnimatedDriver
           })
         ])
       )

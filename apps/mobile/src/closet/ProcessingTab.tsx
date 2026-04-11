@@ -2,10 +2,8 @@ import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, type Href } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Animated, Easing, Pressable, StyleSheet, View } from "react-native";
+import { Animated, Easing, Pressable, StyleSheet, View } from "react-native";
 
-import { useAuth } from "../auth/provider";
-import { archiveClosetItem } from "./client";
 import { fontFamilies } from "../theme";
 import { AppText } from "../ui";
 import { getDraftPrimaryImage } from "./status";
@@ -29,7 +27,6 @@ const palette = {
 
 type ProcessingTabProps = {
   onOpenItem: (itemId: string) => void;
-  onRefresh?: () => Promise<unknown> | void;
   readyCount?: number;
   sections: ClosetQueueSection[];
 };
@@ -138,10 +135,7 @@ function ProcessingProgressBar({
   );
 }
 
-export function ProcessingTab({ onOpenItem, onRefresh, readyCount = 0, sections }: ProcessingTabProps) {
-  const { session } = useAuth();
-  const [archivingId, setArchivingId] = useState<string | null>(null);
-  const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+export function ProcessingTab({ onOpenItem, readyCount = 0, sections }: ProcessingTabProps) {
   const [completedItems, setCompletedItems] = useState<CompletedProcessingItem[]>([]);
   const previousProcessingRef = useRef<Map<string, ClosetDraftSnapshot>>(new Map());
 
@@ -160,36 +154,29 @@ export function ProcessingTab({ onOpenItem, onRefresh, readyCount = 0, sections 
     (): ProcessingListItem[] => {
       const liveIds = new Set(liveEntries.map(({ item }) => item.id));
       const transitioning: ProcessingListItem[] = completedItems
-        .filter(({ item }) => !hiddenIds.includes(item.id) && !liveIds.has(item.id))
+        .filter(({ item }) => !liveIds.has(item.id))
         .map(({ item, progressFrom }) => ({
           initialProgress: progressFrom,
           item,
           sectionKey: "processing" as const
         }));
 
-      const live: ProcessingListItem[] = liveEntries
-        .filter(({ item }) => !hiddenIds.includes(item.id))
-        .map(({ item, sectionKey }) => ({
-          item,
-          sectionKey
-        }));
+      const live: ProcessingListItem[] = liveEntries.map(({ item, sectionKey }) => ({
+        item,
+        sectionKey
+      }));
 
       return transitioning.concat(live);
     },
-    [completedItems, hiddenIds, liveEntries]
+    [completedItems, liveEntries]
   );
-
-  useEffect(() => {
-    const activeIds = new Set(sections.flatMap((section) => section.items.map((item) => item.id)));
-    setHiddenIds((current) => current.filter((id) => activeIds.has(id)));
-  }, [sections]);
 
   useEffect(() => {
     const liveIds = new Set(liveEntries.map(({ item }) => item.id));
     const nextCompleted: CompletedProcessingItem[] = [];
 
     for (const [itemId, item] of previousProcessingRef.current.entries()) {
-      if (liveIds.has(itemId) || hiddenIds.includes(itemId)) {
+      if (liveIds.has(itemId)) {
         continue;
       }
 
@@ -212,7 +199,7 @@ export function ProcessingTab({ onOpenItem, onRefresh, readyCount = 0, sections 
         .filter(({ sectionKey }) => sectionKey === "processing")
         .map(({ item }) => [item.id, item])
     );
-  }, [hiddenIds, liveEntries]);
+  }, [liveEntries]);
 
   useEffect(() => {
     if (completedItems.length === 0) {
@@ -220,31 +207,11 @@ export function ProcessingTab({ onOpenItem, onRefresh, readyCount = 0, sections 
     }
 
     const timeout = setTimeout(() => {
-      setCompletedItems((current) =>
-        current.filter(({ expiresAt, item }) => expiresAt > Date.now() && !hiddenIds.includes(item.id))
-      );
+      setCompletedItems((current) => current.filter(({ expiresAt }) => expiresAt > Date.now()));
     }, 120);
 
     return () => clearTimeout(timeout);
-  }, [completedItems, hiddenIds]);
-
-  async function handleArchive(itemId: string) {
-    if (!session?.access_token || archivingId) {
-      return;
-    }
-
-    setArchivingId(itemId);
-
-    try {
-      await archiveClosetItem(session.access_token, itemId);
-      setHiddenIds((current) => current.concat(itemId));
-      await onRefresh?.();
-    } catch {
-      return;
-    } finally {
-      setArchivingId((current) => (current === itemId ? null : current));
-    }
-  }
+  }, [completedItems]);
 
   return (
     <View style={styles.root}>
@@ -291,7 +258,6 @@ export function ProcessingTab({ onOpenItem, onRefresh, readyCount = 0, sections 
           {items.map(({ initialProgress, item, sectionKey }) => {
             const imageUrl = getDraftPrimaryImage(item)?.url;
             const visual = getVisualState(item, sectionKey);
-            const isArchiving = archivingId === item.id;
 
             return (
               <View key={item.id} style={styles.card}>
@@ -321,22 +287,6 @@ export function ProcessingTab({ onOpenItem, onRefresh, readyCount = 0, sections 
                       />
                     ) : null}
                   </View>
-                </Pressable>
-
-                <Pressable
-                  disabled={isArchiving}
-                  onPress={() => void handleArchive(item.id)}
-                  style={({ pressed }) => [
-                    styles.removeButton,
-                    pressed ? styles.pressed : null,
-                    isArchiving ? styles.removeButtonDisabled : null
-                  ]}
-                >
-                  {isArchiving ? (
-                    <ActivityIndicator color={palette.warmGray} size="small" />
-                  ) : (
-                    <Feather color={palette.warmGray} name="x" size={14} />
-                  )}
                 </Pressable>
               </View>
             );
