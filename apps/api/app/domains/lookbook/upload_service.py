@@ -22,7 +22,7 @@ from app.domains.closet.models import MediaAssetSourceKind
 from app.domains.lookbook.errors import LookbookError
 from app.domains.lookbook.models import LookbookUploadIntent, LookbookUploadIntentStatus, utcnow
 from app.domains.lookbook.repository import LookbookRepository
-from app.domains.lookbook.service import LookbookEntrySnapshot, LookbookService
+from app.domains.lookbook.service import LookbookService, PrivateImageSnapshot
 
 
 @dataclass(frozen=True)
@@ -55,21 +55,21 @@ class LookbookUploadService:
     def create_upload_intent(
         self,
         *,
-        lookbook_id: UUID,
         user_id: UUID,
         filename: str,
         mime_type: str,
         file_size: int,
         sha256: str,
     ) -> LookbookUploadIntentResult:
-        self._get_lookbook_or_raise(lookbook_id=lookbook_id, user_id=user_id)
+        lookbook = self._get_or_create_default_lookbook(user_id=user_id)
         self._validate_upload_metadata(mime_type=mime_type, file_size=file_size, sha256=sha256)
+        self.repository.clear_expired_upload_intents(user_id=user_id)
 
         now = utcnow()
         upload_intent_id = uuid4()
         upload_intent = self.repository.create_upload_intent(
             upload_intent_id=upload_intent_id,
-            lookbook_id=lookbook_id,
+            lookbook_id=lookbook.id,
             user_id=user_id,
             filename=filename,
             mime_type=mime_type,
@@ -78,7 +78,7 @@ class LookbookUploadService:
             staging_bucket=settings.minio_bucket,
             staging_key=build_staging_key(
                 user_id=user_id,
-                lookbook_id=lookbook_id,
+                lookbook_id=lookbook.id,
                 upload_intent_id=upload_intent_id,
             ),
             expires_at=now + timedelta(seconds=LOOKBOOK_UPLOAD_INTENT_TTL_SECONDS),
@@ -95,20 +95,17 @@ class LookbookUploadService:
             ),
         )
 
-    def create_image_entry(
+    def complete_upload(
         self,
         *,
-        lookbook_id: UUID,
         user_id: UUID,
         upload_intent_id: UUID,
-        caption: str | None,
-    ) -> LookbookEntrySnapshot:
-        self._get_lookbook_or_raise(lookbook_id=lookbook_id, user_id=user_id)
+    ) -> PrivateImageSnapshot:
         upload_intent = self.repository.get_upload_intent_for_user(
             upload_intent_id=upload_intent_id,
             user_id=user_id,
         )
-        if upload_intent is None or upload_intent.lookbook_id != lookbook_id:
+        if upload_intent is None:
             raise LookbookError(404, "Lookbook upload intent not found.")
 
         now = utcnow()
@@ -119,10 +116,9 @@ class LookbookUploadService:
         if upload_intent.status == LookbookUploadIntentStatus.FAILED:
             raise LookbookError(
                 409,
-                upload_intent.last_error_detail
-                or "The upload intent has already failed validation.",
+                upload_intent.last_error_detail or "The upload intent has already failed validation.",
             )
-        if normalize_utc_datetime(upload_intent.expires_at) <= now:
+        if _normalize_datetime(upload_intent.expires_at) <= now:
             self.repository.mark_upload_intent_expired(upload_intent=upload_intent)
             self.session.commit()
             raise LookbookError(409, "The upload intent has expired.")
@@ -139,7 +135,11 @@ class LookbookUploadService:
             raise
 
         asset_id = uuid4()
-        final_key = build_final_key(user_id=user_id, lookbook_id=lookbook_id, asset_id=asset_id)
+        final_key = build_final_key(
+            user_id=user_id,
+            lookbook_id=upload_intent.lookbook_id,
+            asset_id=asset_id,
+        )
 
         try:
             self.storage.copy_object(
@@ -159,7 +159,7 @@ class LookbookUploadService:
             self.session.commit()
             raise LookbookError(409, detail) from exc
 
-        self.repository.create_media_asset(
+        asset = self.repository.create_media_asset(
             asset_id=asset_id,
             user_id=user_id,
             bucket=settings.minio_bucket,
@@ -173,22 +173,12 @@ class LookbookUploadService:
             is_private=True,
         )
         self.repository.mark_upload_intent_finalized(upload_intent=upload_intent, finalized_at=now)
-
-        lookbook_service = LookbookService(
+        self.session.commit()
+        return LookbookService(
             session=self.session,
             repository=self.repository,
             storage=self.storage,
-        )
-        try:
-            return lookbook_service.create_image_entry_from_asset(
-                lookbook_id=lookbook_id,
-                user_id=user_id,
-                asset_id=asset_id,
-                caption=caption,
-            )
-        except LookbookError:
-            self.session.rollback()
-            raise
+        )._build_private_image_snapshot(asset)
 
     def _validate_upload_metadata(
         self,
@@ -201,9 +191,7 @@ class LookbookUploadService:
             raise LookbookError(422, "The uploaded MIME type is not supported.")
         if file_size <= 0 or file_size > LOOKBOOK_UPLOAD_MAX_FILE_SIZE:
             raise LookbookError(422, "The uploaded file exceeds the allowed size limit.")
-        if len(sha256) != 64 or any(
-            character not in "0123456789abcdef" for character in sha256.lower()
-        ):
+        if len(sha256) != 64 or any(character not in "0123456789abcdef" for character in sha256.lower()):
             raise LookbookError(422, "sha256 must be a valid lowercase hexadecimal digest.")
 
     def _validate_uploaded_object(self, upload_intent: LookbookUploadIntent) -> ValidatedUpload:
@@ -215,10 +203,7 @@ class LookbookUploadService:
             raise LookbookError(409, "Uploaded object is missing from storage.")
         if object_meta.content_length != upload_intent.file_size:
             raise LookbookError(409, "The uploaded file size did not match the declared upload.")
-        if (
-            object_meta.content_type is not None
-            and object_meta.content_type != upload_intent.mime_type
-        ):
+        if object_meta.content_type is not None and object_meta.content_type != upload_intent.mime_type:
             raise LookbookError(409, "The uploaded MIME type did not match the declared upload.")
 
         image_bytes = self.storage.get_object_bytes(
@@ -249,10 +234,12 @@ class LookbookUploadService:
             height=image.height,
         )
 
-    def _get_lookbook_or_raise(self, *, lookbook_id: UUID, user_id: UUID) -> None:
-        lookbook = self.repository.get_lookbook_for_user(lookbook_id=lookbook_id, user_id=user_id)
-        if lookbook is None:
-            raise LookbookError(404, "Lookbook not found.")
+    def _get_or_create_default_lookbook(self, *, user_id: UUID):
+        return self.repository.get_or_create_default_lookbook(
+            user_id=user_id,
+            title="Personal Lookbook",
+            description=None,
+        )
 
 
 def mime_type_for_image(image: Image.Image) -> str:
@@ -263,7 +250,7 @@ def mime_type_for_image(image: Image.Image) -> str:
         return "image/png"
     if image_format == "WEBP":
         return "image/webp"
-    raise LookbookError(422, "The uploaded MIME type is not supported.")
+    raise LookbookError(422, "Unsupported image format.")
 
 
 def build_staging_key(*, user_id: UUID, lookbook_id: UUID, upload_intent_id: UUID) -> str:
@@ -274,7 +261,7 @@ def build_final_key(*, user_id: UUID, lookbook_id: UUID, asset_id: UUID) -> str:
     return f"lookbook/images/{user_id}/{lookbook_id}/{asset_id}"
 
 
-def normalize_utc_datetime(value: datetime) -> datetime:
+def _normalize_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)

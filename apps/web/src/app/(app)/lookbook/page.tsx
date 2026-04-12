@@ -1,7 +1,7 @@
 import { LookbookPage } from "@/components/companion/LookbookPage";
 import { ApiError } from "@/lib/api";
-import { formatDisplayDate, getDaysAgo, getPrimaryImageUrl } from "@/lib/companion-ui";
-import { listFlattenedLookbookEntries } from "@/lib/lookbook";
+import { formatDisplayDate, getDaysAgo, humanizeValue } from "@/lib/companion-ui";
+import { listAllLookbookEntries } from "@/lib/lookbook";
 import { requireSession } from "../../../lib/auth/session";
 
 function formatEntryDate(value: string) {
@@ -18,27 +18,22 @@ function formatEntryDate(value: string) {
   return formatDisplayDate(value);
 }
 
-function buildContext(entry: Awaited<ReturnType<typeof listFlattenedLookbookEntries>>[number]) {
-  if (entry.entry.caption) {
-    return entry.entry.caption;
+function buildEntryTitle(entry: Awaited<ReturnType<typeof listAllLookbookEntries>>[number]) {
+  if (entry.title) {
+    return entry.title;
   }
-
-  if (entry.entry.note_text) {
-    return entry.entry.note_text.length > 34
-      ? `${entry.entry.note_text.slice(0, 31)}...`
-      : entry.entry.note_text;
+  if (entry.caption) {
+    return entry.caption.length > 40 ? `${entry.caption.slice(0, 37)}...` : entry.caption;
   }
-
-  if (entry.entry.outfit?.title) {
-    return entry.entry.outfit.title;
+  if (entry.source_kind === "wear_log" && entry.source_snapshot?.context) {
+    return humanizeValue(entry.source_snapshot.context) ?? "Saved daily look";
   }
-
-  return entry.lookbook_title;
+  return humanizeValue(entry.intent) ?? "Saved look";
 }
 
-async function listLookbookEntries(accessToken: string) {
+async function loadLookbookEntries(accessToken: string) {
   try {
-    return await listFlattenedLookbookEntries(accessToken);
+    return await listAllLookbookEntries(accessToken);
   } catch (error) {
     if (error instanceof ApiError) {
       console.error("Failed to load lookbook entries.", error);
@@ -51,18 +46,32 @@ async function listLookbookEntries(accessToken: string) {
 
 export default async function LookbookRoutePage() {
   const session = await requireSession();
-  const entries = await listLookbookEntries(session.session.access_token);
+  const entries = await loadLookbookEntries(session.session.access_token);
 
   return (
     <LookbookPage
       entries={entries.map((entry) => ({
-        id: entry.entry.id,
-        imageUrl: getPrimaryImageUrl(entry.entry.image, entry.entry.outfit?.cover_image, entry.lookbook_cover_image),
-        type: entry.entry.entry_type === "outfit" ? "outfit" : "inspiration",
-        dateLabel: formatEntryDate(entry.entry.updated_at),
-        context: buildContext(entry),
-        items: entry.entry.outfit?.item_count ?? 0,
-        isNote: entry.entry.entry_type === "note"
+        id: entry.id,
+        imageUrl: entry.primary_image?.url ?? null,
+        title: buildEntryTitle(entry),
+        meta: [
+          formatEntryDate(entry.published_at ?? entry.updated_at),
+          entry.linked_item_count > 0 ? `${entry.linked_item_count} items` : null
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        badgeLabel: humanizeValue(entry.status === "draft" ? "draft" : entry.intent) ?? "Saved",
+        tags: [entry.occasion_tag, entry.season_tag, entry.style_tag]
+          .map((value) => humanizeValue(value))
+          .filter((value): value is string => Boolean(value)),
+        tab:
+          entry.status === "draft"
+            ? "draft"
+            : entry.intent === "logged"
+              ? "logged"
+              : entry.intent === "recreate"
+                ? "recreate"
+                : "inspiration"
       }))}
     />
   );
