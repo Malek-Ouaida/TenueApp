@@ -155,7 +155,10 @@ export type WearMatchCandidateSnapshot = {
   closet_item_id: string;
   rank: number;
   score: number;
-  signals: unknown;
+  normalized_confidence: number | null;
+  match_state: string;
+  is_exact_match: boolean;
+  explanation: Record<string, unknown> | null;
   item: WearCandidateItemSnapshot | null;
 };
 
@@ -165,12 +168,17 @@ export type WearDetectedItemSnapshot = {
   predicted_category: string | null;
   predicted_subcategory: string | null;
   predicted_colors: string[];
+  normalized_metadata: Record<string, unknown>;
+  field_confidences: Record<string, number | null>;
   confidence: number | null;
   bbox: Record<string, number> | null;
   status: WearDetectedItemStatusValue;
   exclusion_reason: string | null;
   crop_image: WearMediaSnapshot | null;
   candidate_matches: WearMatchCandidateSnapshot[];
+  match_resolution: Record<string, unknown> | null;
+  exact_match: boolean;
+  structured_explanation: Record<string, unknown> | null;
 };
 
 export type WearLogDetailSnapshot = {

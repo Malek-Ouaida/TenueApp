@@ -10,6 +10,9 @@ export type ClosetMetadataOptionsResponse = {
   processing_statuses: string[];
   review_statuses: string[];
   categories: ClosetMetadataCategoryOption[];
+  subcategory_by_category: Record<string, string[]>;
+  primary_colors: string[];
+  secondary_colors: string[];
   colors: string[];
   materials: string[];
   patterns: string[];
@@ -19,6 +22,11 @@ export type ClosetMetadataOptionsResponse = {
   season_tags: string[];
   silhouettes: string[];
   attributes: string[];
+  formality: string[];
+  warmth: string[];
+  coverage: string[];
+  statement_level: string[];
+  versatility: string[];
 };
 
 export type ClosetProcessingImageSnapshot = {
@@ -155,6 +163,11 @@ export type ClosetMetadataProjectionSnapshot = {
   season_tags: string[] | null;
   silhouette: string | null;
   attributes: string[] | null;
+  formality: string | null;
+  warmth: string | null;
+  coverage: string | null;
+  statement_level: string | null;
+  versatility: string | null;
   confirmed_at: string | null;
   updated_at: string;
 };

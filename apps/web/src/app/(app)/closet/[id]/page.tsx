@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { AlertCircle, ArrowLeft } from "lucide-react";
 
 import { ApiError } from "@/lib/api";
 import { getClosetItemDetail, getSimilarClosetItems } from "@/lib/closet";
@@ -24,17 +24,33 @@ function formatValueList(values: string[] | null | undefined) {
   return values?.map((value) => humanizeValue(value) ?? value).join(", ") || "Not set";
 }
 
+async function getClosetItemOrNotFound(accessToken: string, itemId: string) {
+  try {
+    return await getClosetItemDetail(accessToken, itemId);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      notFound();
+    }
+
+    throw error;
+  }
+}
+
 export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
   const { id } = await params;
   const session = await requireSession();
   const accessToken = session.session.access_token;
 
   try {
-    const [item, similarItems, usageItems] = await Promise.all([
-      getClosetItemDetail(accessToken, id),
+    const item = await getClosetItemOrNotFound(accessToken, id);
+    const [similarResult, usageResult] = await Promise.allSettled([
       getSimilarClosetItems(accessToken, id),
       listAllInsightItemUsage(accessToken)
     ]);
+    const similarItems = similarResult.status === "fulfilled" ? similarResult.value : [];
+    const usageItems = usageResult.status === "fulfilled" ? usageResult.value : [];
+    const usageUnavailable = usageResult.status === "rejected";
+    const similarUnavailable = similarResult.status === "rejected";
 
     const usage = usageItems.find((entry) => entry.closet_item_id === item.item_id);
     const addedDaysAgo = getDaysAgo(item.confirmed_at);
@@ -184,6 +200,11 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
                     })}
                   </div>
                 </div>
+                {usageUnavailable ? (
+                  <p className="mt-4 border-t border-border pt-4 font-body text-sm text-muted-foreground">
+                    Usage insights are temporarily unavailable.
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>
@@ -234,12 +255,42 @@ export default async function ItemDetailPage({ params }: ItemDetailPageProps) {
               })}
             </div>
           </div>
+        ) : similarUnavailable ? (
+          <div className="mt-12 rounded-2xl border border-border bg-card px-5 py-4" style={{ boxShadow: "var(--shadow-sm)" }}>
+            <p className="font-body text-sm text-muted-foreground">
+              Similar-item suggestions are temporarily unavailable.
+            </p>
+          </div>
         ) : null}
       </div>
     );
   } catch (error) {
-    if (error instanceof ApiError && error.status === 404) {
-      notFound();
+    if (error instanceof ApiError) {
+      return (
+        <div className="page-enter">
+          <Link
+            href="/closet"
+            className="mb-6 inline-flex items-center gap-2 font-body text-sm text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" /> Back to closet
+          </Link>
+
+          <div
+            className="rounded-3xl border border-border bg-card px-6 py-10 text-center"
+            style={{ boxShadow: "var(--shadow-sm)" }}
+          >
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-secondary">
+              <AlertCircle className="h-5 w-5 text-foreground" />
+            </div>
+            <h1 className="mb-2 font-display text-2xl font-semibold tracking-editorial text-foreground">
+              Closet item unavailable
+            </h1>
+            <p className="mx-auto max-w-md font-body text-sm text-muted-foreground">
+              {error.message}
+            </p>
+          </div>
+        </div>
+      );
     }
 
     throw error;

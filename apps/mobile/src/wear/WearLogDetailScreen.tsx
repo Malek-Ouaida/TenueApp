@@ -3,6 +3,7 @@ import { Image } from "expo-image";
 import { router, useLocalSearchParams, type Href } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "../auth/provider";
 import { humanizeEnum } from "../lib/format";
@@ -54,9 +55,129 @@ function buildHeroUri(detail: {
   );
 }
 
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function detectedPrimaryColor(detectedItem: WearDetectedItemSnapshot) {
+  return (
+    asString(detectedItem.normalized_metadata.primary_color) ??
+    detectedItem.predicted_colors[0] ??
+    null
+  );
+}
+
+function detectedSubtitle(detectedItem: WearDetectedItemSnapshot) {
+  const subcategory =
+    asString(detectedItem.normalized_metadata.subcategory) ?? detectedItem.predicted_subcategory;
+  const primaryColor = detectedPrimaryColor(detectedItem);
+  return [subcategory, primaryColor].filter(Boolean).map((value) => humanizeEnum(String(value))).join(" · ");
+}
+
+function detectedStatusCopy(detectedItem: WearDetectedItemSnapshot) {
+  if (detectedItem.match_resolution?.state === "collision_rejected") {
+    return "A stronger exact match claimed this closet item. Review the remaining suggestions.";
+  }
+  if (detectedItem.exact_match) {
+    return "Exact closet match recommended and preselected.";
+  }
+  if (detectedItem.candidate_matches.length === 0) {
+    return "No closet match found.";
+  }
+  return "Suggested matches need review before confirmation.";
+}
+
+function formatExplanationFieldList(fields: string[], limit = 6) {
+  if (fields.length <= limit) {
+    return fields.join(", ");
+  }
+  return `${fields.slice(0, limit).join(", ")} +${fields.length - limit} more`;
+}
+
+function summarizeCandidateExplanation(explanation: Record<string, unknown> | null | undefined) {
+  const perField = explanation?.per_field;
+  if (!perField || typeof perField !== "object") {
+    return null;
+  }
+
+  const fieldEntries = Object.entries(perField as Record<string, unknown>)
+    .filter(([fieldName]) => fieldName !== "category")
+    .map(([fieldName, value]) => {
+      const payload = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+      const contribution =
+        typeof payload.contribution === "number"
+          ? payload.contribution
+          : 0;
+      const availablePoints =
+        typeof payload.available_points === "number"
+          ? payload.available_points
+          : 0;
+      const status = typeof payload.status === "string" ? payload.status : null;
+      return { fieldName, contribution, availablePoints, status };
+    });
+
+  if (fieldEntries.length === 0) {
+    return null;
+  }
+
+  const sharedFields = fieldEntries.filter((entry) => entry.status !== "missing");
+  const positiveFields = sharedFields
+    .filter((entry) => entry.contribution > 0)
+    .sort((left, right) => right.contribution - left.contribution)
+    .map((entry) => humanizeEnum(entry.fieldName));
+  const mismatchedFields = sharedFields
+    .filter((entry) => entry.status === "mismatch")
+    .sort((left, right) => right.availablePoints - left.availablePoints)
+    .map((entry) => humanizeEnum(entry.fieldName));
+  const missingFieldCount = fieldEntries.filter((entry) => entry.status === "missing").length;
+
+  const summaryLines: string[] = [];
+
+  if (sharedFields.length > 0) {
+    summaryLines.push(
+      `Scored across ${sharedFields.length} shared ${sharedFields.length === 1 ? "field" : "fields"}.`
+    );
+  } else if (missingFieldCount > 0) {
+    summaryLines.push("No shared metadata was available to compare yet.");
+  }
+
+  if (positiveFields.length > 0) {
+    summaryLines.push(`Overlap on ${formatExplanationFieldList(positiveFields)}.`);
+  }
+
+  if (mismatchedFields.length > 0) {
+    summaryLines.push(`Different on ${formatExplanationFieldList(mismatchedFields, 4)}.`);
+  }
+
+  if (missingFieldCount > 0 && sharedFields.length > 0) {
+    summaryLines.push(
+      `${missingFieldCount} ${missingFieldCount === 1 ? "field was" : "fields were"} unavailable on one side.`
+    );
+  }
+
+  return summaryLines.length > 0 ? summaryLines : null;
+}
+
+function resolvedExactCandidateId(detectedItem: WearDetectedItemSnapshot) {
+  if (!detectedItem.exact_match) {
+    return null;
+  }
+
+  const resolvedClosetItemId =
+    typeof detectedItem.match_resolution?.closet_item_id === "string"
+      ? detectedItem.match_resolution.closet_item_id
+      : null;
+
+  return (
+    detectedItem.candidate_matches.find((candidate) => candidate.is_exact_match)?.closet_item_id ??
+    resolvedClosetItemId
+  );
+}
+
 export default function WearLogDetailScreen() {
   const { wearLogId } = useLocalSearchParams<{ wearLogId?: string }>();
   const { session } = useAuth();
+  const insets = useSafeAreaInsets();
   const wearLog = useWearLogDetail(session?.access_token, wearLogId);
   const [selectedMatches, setSelectedMatches] = useState<Record<string, string | null>>({});
   const [excludedDetectedItems, setExcludedDetectedItems] = useState<Record<string, boolean>>({});
@@ -74,7 +195,7 @@ export default function WearLogDetailScreen() {
         (item) => item.detected_item_id === detectedItem.id
       );
       nextSelectedMatches[detectedItem.id] =
-        linkedItem?.closet_item_id ?? detectedItem.candidate_matches[0]?.closet_item_id ?? null;
+        linkedItem?.closet_item_id ?? resolvedExactCandidateId(detectedItem) ?? null;
       nextExcluded[detectedItem.id] = detectedItem.status === "excluded";
     }
 
@@ -166,7 +287,14 @@ export default function WearLogDetailScreen() {
   return (
     <ScrollView
       bounces={false}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        {
+          paddingTop: Math.max(insets.top + 16, 32),
+          paddingBottom: insets.bottom + 32
+        }
+      ]}
+      contentInsetAdjustmentBehavior="never"
       showsVerticalScrollIndicator={false}
       style={styles.screen}
     >
@@ -176,6 +304,15 @@ export default function WearLogDetailScreen() {
           onPress={() => router.back()}
         />
         <View style={styles.headerActions}>
+          {detail.is_confirmed && !detail.archived_at ? (
+            <Pressable
+              onPress={() => router.push(`/lookbook/add?wearLogId=${detail.id}` as Href)}
+              style={({ pressed }) => [styles.headerPill, pressed ? styles.pressed : null]}
+            >
+              <Feather color={featurePalette.foreground} name="bookmark" size={14} />
+              <AppText style={styles.headerPillLabel}>Save Look</AppText>
+            </Pressable>
+          ) : null}
           {detail.status === "failed" ? (
             <Pressable
               onPress={() => void wearLog.reprocess()}
@@ -299,7 +436,13 @@ export default function WearLogDetailScreen() {
           <View style={styles.noticeCard}>
             <AppText style={styles.noticeTitle}>No closet items linked yet</AppText>
             <AppText style={styles.noticeBody}>
-              Once this wear log is confirmed, the worn closet items will appear here.
+              {detail.status === "failed"
+                ? "Processing stopped before Tenue could link any real closet matches."
+                : detail.status === "processing"
+                  ? "Tenue is still matching the photo to your closet. Linked items will appear here when analysis finishes."
+                  : detail.status === "needs_review"
+                    ? "Confirm or exclude the detected items above before anything is linked into the wear log."
+                    : "Once this wear log is confirmed, the worn closet items will appear here."}
             </AppText>
           </View>
         ) : (
@@ -370,16 +513,15 @@ function DetectedItemCard({
           <AppText style={styles.detectedTitle}>
             {humanizeEnum(detectedItem.predicted_role ?? detectedItem.predicted_category ?? "Detected item")}
           </AppText>
-          <AppText style={styles.detectedSubtitle}>
-            {[detectedItem.predicted_subcategory, detectedItem.predicted_colors[0]]
-              .filter(Boolean)
-              .map((value) => humanizeEnum(value))
-              .join(" · ")}
-          </AppText>
+          <AppText style={styles.detectedSubtitle}>{detectedSubtitle(detectedItem)}</AppText>
         </View>
         <Pressable onPress={onExcludeToggle} style={styles.excludeButton}>
           <Feather color={excluded ? "#FFFFFF" : featurePalette.foreground} name="x" size={14} />
         </Pressable>
+      </View>
+
+      <View style={styles.detectedState}>
+        <AppText style={styles.detectedStateText}>{detectedStatusCopy(detectedItem)}</AppText>
       </View>
 
       {detectedItem.crop_image?.url ? (
@@ -387,8 +529,19 @@ function DetectedItemCard({
       ) : null}
 
       <View style={styles.candidateList}>
+        {detectedItem.candidate_matches.length === 0 ? (
+          <View style={styles.emptyCandidateState}>
+            <AppText style={styles.emptyCandidateTitle}>No closet match found</AppText>
+            <AppText style={styles.emptyCandidateBody}>
+              Exclude this detection before confirming the wear log.
+            </AppText>
+          </View>
+        ) : null}
+
         {detectedItem.candidate_matches.map((candidate) => {
           const selected = selectedClosetItemId === candidate.closet_item_id && !excluded;
+          const explanation = candidate.explanation as Record<string, unknown> | null;
+          const explanationSummary = summarizeCandidateExplanation(explanation);
           return (
             <Pressable
               key={candidate.id}
@@ -416,8 +569,15 @@ function DetectedItemCard({
                   {candidate.item?.title ?? "Closet item"}
                 </AppText>
                 <AppText style={styles.candidateSubtitle}>
-                  {Math.round(candidate.score * 100)}% match
+                  {Math.round(candidate.score)}/100 · {humanizeEnum(candidate.match_state)}
                 </AppText>
+                {explanationSummary
+                  ? explanationSummary.map((line) => (
+                      <AppText key={`${candidate.id}-${line}`} style={styles.candidateReason}>
+                        {line}
+                      </AppText>
+                    ))
+                  : null}
               </View>
             </Pressable>
           );
@@ -433,10 +593,9 @@ const styles = StyleSheet.create({
     backgroundColor: featurePalette.background
   },
   content: {
-    paddingTop: 56,
     paddingHorizontal: 20,
-    paddingBottom: 40,
-    gap: 18
+    gap: 18,
+    flexGrow: 1
   },
   loadingScreen: {
     flex: 1,
@@ -456,12 +615,15 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between"
   },
   headerActions: {
     flexDirection: "row",
-    gap: 8
+    gap: 8,
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    flexShrink: 1
   },
   headerPill: {
     flexDirection: "row",
@@ -605,6 +767,18 @@ const styles = StyleSheet.create({
     ...featureTypography.label,
     marginTop: 2
   },
+  detectedState: {
+    borderRadius: 14,
+    backgroundColor: featurePalette.secondary,
+    paddingHorizontal: 12,
+    paddingVertical: 10
+  },
+  detectedStateText: {
+    ...featureTypography.label,
+    fontSize: 12,
+    lineHeight: 17,
+    color: featurePalette.darkText
+  },
   excludeButton: {
     width: 30,
     height: 30,
@@ -621,9 +795,29 @@ const styles = StyleSheet.create({
   candidateList: {
     gap: 10
   },
+  emptyCandidateState: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(15, 23, 42, 0.08)",
+    backgroundColor: "#F8F6F1",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 4
+  },
+  emptyCandidateTitle: {
+    fontFamily: "Manrope_700Bold",
+    fontSize: 13,
+    lineHeight: 17,
+    color: featurePalette.darkText
+  },
+  emptyCandidateBody: {
+    ...featureTypography.label,
+    fontSize: 12,
+    lineHeight: 17
+  },
   candidateCard: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 12,
     borderRadius: 16,
     padding: 10,
@@ -664,6 +858,12 @@ const styles = StyleSheet.create({
     ...featureTypography.label,
     marginTop: 2,
     fontSize: 12
+  },
+  candidateReason: {
+    ...featureTypography.label,
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16
   },
   loggedItemList: {
     gap: 12

@@ -67,16 +67,23 @@ export function PrimaryActionButton({
 export function SecondaryActionButton({
   label,
   onPress,
-  icon
+  icon,
+  disabled
 }: {
   label: string;
   onPress: () => void;
   icon?: ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
+      disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.secondaryButton, pressed ? styles.pressedWide : null]}
+      style={({ pressed }) => [
+        styles.secondaryButton,
+        disabled ? styles.disabled : null,
+        pressed && !disabled ? styles.pressedWide : null
+      ]}
     >
       <View style={styles.primaryButtonContent}>
         {icon}

@@ -175,7 +175,11 @@ export function TenueTabBar({ navigation, state }: TenueTabBarProps) {
         assets
       });
       await triggerSuccessHaptic();
-      router.push((drafts.length === 1 ? `/review/${drafts[0]?.id}` : "/review") as Href);
+      if (!drafts.length) {
+        return;
+      }
+
+      router.push("/closet?tab=processing" as Href);
     } catch {
       await triggerErrorHaptic();
     }
@@ -204,7 +208,7 @@ export function TenueTabBar({ navigation, state }: TenueTabBarProps) {
       }
 
       await triggerSuccessHaptic();
-      router.push(`/review/${draft.id}` as Href);
+      router.push("/closet?tab=processing" as Href);
     } catch {
       await triggerErrorHaptic();
     }

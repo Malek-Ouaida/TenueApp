@@ -28,6 +28,16 @@ function appendUniqueItems<T extends { id: string }>(current: T[], next: T[]) {
   return current.concat(next.filter((item) => !seen.has(item.id)));
 }
 
+async function loadWearCalendarRange(
+  accessToken: string,
+  params: { startDate: string; endDate: string }
+) {
+  return getWearCalendar(accessToken, {
+    start_date: params.startDate,
+    end_date: params.endDate
+  });
+}
+
 function shouldPollWearLog(detail: WearLogDetailSnapshot | null) {
   return detail?.status === "processing";
 }
@@ -121,9 +131,9 @@ export function useWearCalendar(accessToken?: string | null, totalDays = 14) {
       const endDate = new Date();
       endDate.setHours(12, 0, 0, 0);
       const startDate = shiftDate(endDate, -(totalDays - 1));
-      const response = await getWearCalendar(accessToken, {
-        start_date: formatLocalDate(startDate),
-        end_date: formatLocalDate(endDate)
+      const response = await loadWearCalendarRange(accessToken, {
+        startDate: formatLocalDate(startDate),
+        endDate: formatLocalDate(endDate)
       });
       setDays(response.days);
     } catch (loadError) {
@@ -137,6 +147,52 @@ export function useWearCalendar(accessToken?: string | null, totalDays = 14) {
   useEffect(() => {
     void load();
   }, [accessToken, totalDays]);
+
+  return {
+    days,
+    error,
+    isLoading,
+    refresh: load
+  };
+}
+
+export function useWearCalendarRange(
+  accessToken?: string | null,
+  params: { startDate?: string | null; endDate?: string | null } = {}
+) {
+  const startDate = params.startDate ?? null;
+  const endDate = params.endDate ?? null;
+  const [days, setDays] = useState<WearCalendarDaySnapshot[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    if (!accessToken || !startDate || !endDate) {
+      setDays([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await loadWearCalendarRange(accessToken, {
+        startDate,
+        endDate
+      });
+      setDays(response.days);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Wear calendar could not be loaded.");
+      setDays([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, [accessToken, endDate, startDate]);
 
   return {
     days,

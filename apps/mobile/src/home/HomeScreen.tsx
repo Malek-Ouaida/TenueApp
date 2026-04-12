@@ -1,8 +1,8 @@
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { router, type Href } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { router, useFocusEffect, type Href } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Easing,
@@ -15,6 +15,7 @@ import {
 import { useAuth } from "../auth/provider";
 import { selectSingleImage } from "../closet/upload";
 import { useClosetInsights } from "../closet/insights";
+import { useLookbookEntries } from "../lookbook/hooks";
 import { useOutfits } from "../outfits/provider";
 import { useProfile } from "../profile/hooks";
 import { AppText } from "../ui";
@@ -22,7 +23,7 @@ import { FtueOverlay } from "../ui/feature-components";
 import { supportsNativeAnimatedDriver } from "../lib/runtime";
 import { featurePalette, featureShadows, featureTypography } from "../theme/feature";
 import { useInsightOverview } from "./overview";
-import { aiStylistPreview, homeFtueSteps, homeRecentLooks } from "./reference";
+import { aiStylistPreview, homeFtueSteps } from "./reference";
 import { hasSeenHomeFtue, markHomeFtueSeen } from "./storage";
 
 function getGreeting() {
@@ -80,9 +81,15 @@ export default function HomeScreen() {
   });
   const closetInsights = useClosetInsights(session?.access_token);
   const insightOverview = useInsightOverview(session?.access_token);
+  const lookbook = useLookbookEntries(session?.access_token, { status: "published" }, 6);
   const [showFtue, setShowFtue] = useState(false);
   const [ftueStep, setFtueStep] = useState(0);
   const animations = useRef(Array.from({ length: 5 }, () => new Animated.Value(0))).current;
+  const lookbookRefreshRef = useRef(lookbook.refresh);
+
+  useEffect(() => {
+    lookbookRefreshRef.current = lookbook.refresh;
+  }, [lookbook.refresh]);
 
   useEffect(() => {
     Animated.stagger(
@@ -124,6 +131,12 @@ export default function HomeScreen() {
       }
     };
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void lookbookRefreshRef.current();
+    }, [])
+  );
 
   async function dismissFtue() {
     setShowFtue(false);
@@ -198,6 +211,20 @@ export default function HomeScreen() {
       icon: <MaterialCommunityIcons color="#E46B34" name="fire" size={18} />
     }
   ] as const;
+  const recentLooks = useMemo(
+    () =>
+      lookbook.items.slice(0, 4).map((entry, index) => ({
+        id: entry.id,
+        imageUrl: entry.primary_image?.url ?? null,
+        background: ["#F7EFE6", "#F3F0FF", "#F0F7EF", "#FFF1EA"][index % 4],
+        label:
+          entry.title ??
+          entry.caption ??
+          entry.source_snapshot?.context ??
+          "Saved look"
+      })),
+    [lookbook.items]
+  );
 
   return (
     <>
@@ -380,7 +407,7 @@ export default function HomeScreen() {
               horizontal
               showsHorizontalScrollIndicator={false}
             >
-              {homeRecentLooks.map((look) => (
+              {recentLooks.map((look) => (
                 <Pressable
                   key={look.id}
                   onPress={() => push(`/lookbook/${look.id}`)}
@@ -392,7 +419,13 @@ export default function HomeScreen() {
                   ]}
                 >
                   <View style={styles.recentLookImageFrame}>
-                    <Image contentFit="cover" source={look.image} style={styles.recentLookImage} />
+                    {look.imageUrl ? (
+                      <Image contentFit="cover" source={{ uri: look.imageUrl }} style={styles.recentLookImage} />
+                    ) : (
+                      <View style={styles.recentLookFallback}>
+                        <Feather color={featurePalette.muted} name="image" size={20} />
+                      </View>
+                    )}
                   </View>
                   <AppText style={styles.recentLookLabel}>{look.label}</AppText>
                 </Pressable>
@@ -751,6 +784,11 @@ const styles = StyleSheet.create({
   recentLookImage: {
     width: "100%",
     height: "100%"
+  },
+  recentLookFallback: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center"
   },
   recentLookLabel: {
     fontFamily: "Manrope_700Bold",
