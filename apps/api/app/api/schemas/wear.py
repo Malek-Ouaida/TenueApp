@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -265,7 +265,10 @@ class WearMatchCandidateSnapshot(BaseModel):
     closet_item_id: UUID
     rank: int
     score: float
-    signals: object | None
+    normalized_confidence: float | None
+    match_state: str
+    is_exact_match: bool
+    explanation: dict[str, Any] | None
     item: WearCandidateItemSnapshot | None
 
 
@@ -275,12 +278,17 @@ class WearDetectedItemSnapshot(BaseModel):
     predicted_category: str | None
     predicted_subcategory: str | None
     predicted_colors: list[str]
+    normalized_metadata: dict[str, Any]
+    field_confidences: dict[str, float | None]
     confidence: float | None
     bbox: dict[str, float] | None
     status: WearDetectedItemStatusValue
     exclusion_reason: str | None
     crop_image: WearMediaSnapshot | None
     candidate_matches: list[WearMatchCandidateSnapshot]
+    match_resolution: dict[str, Any] | None
+    exact_match: bool
+    structured_explanation: dict[str, Any] | None
 
 
 class WearLogDetailSnapshot(BaseModel):

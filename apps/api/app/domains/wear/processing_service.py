@@ -11,15 +11,22 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.storage import ObjectStorageClient
-from app.domains.closet.models import ApplicabilityState, MediaAssetSourceKind
-from app.domains.closet.normalization import normalize_field_value
+from app.domains.closet.models import MediaAssetSourceKind
 from app.domains.closet.taxonomy import CATEGORY_SUBCATEGORIES, is_valid_category_subcategory_pair
 from app.domains.wear.detection import (
     OUTFIT_DETECTION_TASK_TYPE,
     DetectedOutfitItem,
     OutfitDetectionProvider,
 )
-from app.domains.wear.matching_service import WearDetectionInput, WearMatchingService
+from app.domains.wear.matching_service import (
+    WearDetectionInput,
+    WearDetectionMatchResult,
+    WearMatchingService,
+)
+from app.domains.wear.metadata import (
+    build_detected_legacy_columns,
+    normalize_detected_metadata_fields,
+)
 from app.domains.wear.models import (
     WearDetectedItemStatus,
     WearLogStatus,
@@ -76,21 +83,26 @@ _SUPPORTED_WEAR_ROLES = {
     "scarf",
     "eyewear",
 }
+_NON_CORE_ACCESSORY_ROLES = {
+    "bag",
+    "accessory",
+    "jewelry",
+    "hat",
+    "scarf",
+    "eyewear",
+}
+_NON_CORE_ACCESSORY_MIN_SCORE = 80.0
 
 
 @dataclass(frozen=True)
 class NormalizedWearDetection:
     role: str | None
-    category: str | None
-    subcategory: str | None
-    colors: list[str]
-    material: str | None
-    pattern: str | None
-    fit_tags: list[str]
-    silhouette: str | None
-    attributes: list[str]
+    normalized_metadata: dict[str, Any]
+    field_confidences: dict[str, float | None]
+    field_notes: dict[str, str]
     confidence: float | None
     bbox: dict[str, float] | None
+    sort_index: int
 
 
 class WearProcessingError(Exception):
@@ -143,6 +155,7 @@ class WearProcessingService:
         wear_log.status = WearLogStatus.PROCESSING
         wear_log.failure_code = None
         wear_log.failure_summary = None
+        self.repository.clear_detected_items_for_log(wear_log_id=wear_log.id)
 
         if not self.job_repository.has_pending_or_running_job(
             wear_log_id=wear_log.id,
@@ -254,26 +267,31 @@ class WearProcessingService:
 
             surfaced_count = 0
             matched_count = 0
-
-            for sort_index, detection in enumerate(normalized_detections):
-                detection_input = WearDetectionInput(
-                    role=detection.role,
-                    category=detection.category,
-                    subcategory=detection.subcategory,
-                    colors=list(detection.colors),
-                    material=detection.material,
-                    pattern=detection.pattern,
-                    fit_tags=list(detection.fit_tags),
-                    silhouette=detection.silhouette,
-                    attributes=list(detection.attributes),
-                    confidence=detection.confidence,
-                )
-
-                ranked_candidates = self.matching_service.rank_candidates_for_detection(
+            hidden_unmatched_count = 0
+            match_results = [
+                self.matching_service.match_detection(
                     user_id=wear_log.user_id,
-                    detection=detection_input,
-                    limit=3,
+                    detection=WearDetectionInput(
+                        role=detection.role,
+                        normalized_metadata=detection.normalized_metadata,
+                        field_confidences=detection.field_confidences,
+                        confidence=detection.confidence,
+                        sort_index=detection.sort_index,
+                    ),
                 )
+                for detection in normalized_detections
+            ]
+            resolved_matches = self.matching_service.resolve_exact_match_collisions(
+                results=match_results
+            )
+
+            for detection, match_result in zip(normalized_detections, resolved_matches, strict=False):
+                if not _should_surface_detection_match(
+                    detection=detection,
+                    match_result=match_result,
+                ):
+                    hidden_unmatched_count += 1
+                    continue
 
                 crop_asset_id = self._create_detection_crop_asset(
                     user_id=wear_log.user_id,
@@ -282,38 +300,71 @@ class WearProcessingService:
                     source_mime_type=asset.mime_type,
                     bbox=detection.bbox,
                 )
-
+                legacy_columns = build_detected_legacy_columns(detection.normalized_metadata)
                 detected_item = self.repository.create_detected_item(
                     wear_log_id=wear_log.id,
                     processing_run_id=run.id,
-                    sort_index=sort_index,
+                    sort_index=detection.sort_index,
                     predicted_role=self._coerce_detected_role(detection.role),
-                    predicted_category=detection.category,
-                    predicted_subcategory=detection.subcategory,
-                    predicted_colors_json=list(detection.colors),
-                    predicted_material=detection.material,
-                    predicted_pattern=detection.pattern,
-                    predicted_fit_tags_json=list(detection.fit_tags),
-                    predicted_silhouette=detection.silhouette,
-                    predicted_attributes_json=list(detection.attributes),
+                    predicted_category=legacy_columns["predicted_category"],
+                    predicted_subcategory=legacy_columns["predicted_subcategory"],
+                    predicted_colors_json=legacy_columns["predicted_colors_json"],
+                    predicted_material=legacy_columns["predicted_material"],
+                    predicted_pattern=legacy_columns["predicted_pattern"],
+                    predicted_fit_tags_json=legacy_columns["predicted_fit_tags_json"],
+                    predicted_silhouette=legacy_columns["predicted_silhouette"],
+                    predicted_attributes_json=legacy_columns["predicted_attributes_json"],
+                    normalized_metadata_json=detection.normalized_metadata,
+                    field_confidences_json=detection.field_confidences,
+                    matching_explanation_json={
+                        "field_notes": detection.field_notes,
+                        "match_resolution": match_result.match_resolution,
+                        "exact_match": match_result.exact_match,
+                        "structured_explanation": match_result.structured_explanation,
+                    },
                     confidence=detection.confidence,
                     bbox_json=detection.bbox,
                     crop_asset_id=crop_asset_id,
                     status=WearDetectedItemStatus.DETECTED,
                 )
 
-                for candidate in ranked_candidates:
+                for candidate in match_result.candidates:
                     self.repository.create_match_candidate(
                         detected_item_id=detected_item.id,
                         closet_item_id=candidate.closet_item_id,
                         rank=candidate.rank,
                         score=candidate.score,
-                        signals_json=candidate.signals_json,
+                        signals_json={
+                            "normalized_confidence": candidate.normalized_confidence,
+                            "match_state": candidate.match_state,
+                            "is_exact_match": candidate.is_exact_match,
+                            "explanation": candidate.explanation_json,
+                        },
                     )
 
                 surfaced_count += 1
-                if ranked_candidates:
+                if match_result.candidates:
                     matched_count += 1
+
+            if surfaced_count == 0:
+                wear_log.status = WearLogStatus.FAILED
+                wear_log.failure_code = "no_closet_matches"
+                wear_log.failure_summary = (
+                    "We could not match this photo to items in your closet."
+                )
+                run.status = WearProcessingStatus.FAILED
+                run.completed_at = now
+                run.failure_code = wear_log.failure_code
+                run.failure_payload = {
+                    "provider_detections_count": len(result.detections),
+                    "normalized_detections_count": len(normalized_detections),
+                    "surfaced_count": 0,
+                    "matched_count": 0,
+                    "hidden_unmatched_count": hidden_unmatched_count,
+                    "message": wear_log.failure_summary,
+                }
+                self.session.flush()
+                return
 
             wear_log.status = WearLogStatus.NEEDS_REVIEW
             wear_log.failure_code = None
@@ -326,7 +377,7 @@ class WearProcessingService:
                 "normalized_detections_count": len(normalized_detections),
                 "surfaced_count": surfaced_count,
                 "matched_count": matched_count,
-                "unmatched_count": surfaced_count - matched_count,
+                "hidden_unmatched_count": hidden_unmatched_count,
             }
             self.session.flush()
 
@@ -348,21 +399,22 @@ class WearProcessingService:
         normalized: list[NormalizedWearDetection] = []
         seen: set[tuple[object, ...]] = set()
 
-        for raw_detection in detections:
-            item = self._normalize_detection(raw_detection)
+        for index, raw_detection in enumerate(detections):
+            item = self._normalize_detection(raw_detection, fallback_sort_index=index)
             if item is None:
                 continue
 
             dedupe_key = (
                 item.role,
-                item.category,
-                item.subcategory,
-                tuple(item.colors),
-                item.material,
-                item.pattern,
-                tuple(item.fit_tags),
-                item.silhouette,
-                tuple(item.attributes),
+                item.normalized_metadata.get("category"),
+                item.normalized_metadata.get("subcategory"),
+                item.normalized_metadata.get("primary_color"),
+                tuple(item.normalized_metadata.get("secondary_colors") or []),
+                item.normalized_metadata.get("material"),
+                item.normalized_metadata.get("pattern"),
+                tuple(item.normalized_metadata.get("fit_tags") or []),
+                item.normalized_metadata.get("silhouette"),
+                tuple(item.normalized_metadata.get("attributes") or []),
                 _rounded_bbox_key(item.bbox),
             )
             if dedupe_key in seen:
@@ -376,13 +428,19 @@ class WearProcessingService:
     def _normalize_detection(
         self,
         detection: DetectedOutfitItem,
+        *,
+        fallback_sort_index: int,
     ) -> NormalizedWearDetection | None:
-        category = _normalize_scalar_field("category", detection.category)
-        subcategory = _normalize_scalar_field("subcategory", detection.subcategory)
+        normalized_metadata, field_confidences, field_notes = normalize_detected_metadata_fields(
+            _build_detection_metadata_payload(detection)
+        )
+        category = _as_string(normalized_metadata.get("category"))
+        subcategory = _as_string(normalized_metadata.get("subcategory"))
 
         if subcategory is not None:
             mapped_category = _SUBCATEGORY_TO_CATEGORY.get(subcategory)
             if mapped_category is not None:
+                normalized_metadata["category"] = mapped_category
                 category = mapped_category
 
         role = _normalize_role(
@@ -390,10 +448,9 @@ class WearProcessingService:
             category=category,
             subcategory=subcategory,
         )
-
         if category is None:
             category = _infer_category_from_role(role)
-
+            normalized_metadata["category"] = category
         if role is None:
             role = _infer_role_from_category_subcategory(
                 category=category,
@@ -401,46 +458,24 @@ class WearProcessingService:
             )
 
         if category is not None and subcategory is not None:
-            if not is_valid_category_subcategory_pair(
-                category=category,
-                subcategory=subcategory,
-            ):
-                subcategory = None
+            if not is_valid_category_subcategory_pair(category=category, subcategory=subcategory):
+                normalized_metadata["subcategory"] = None
 
-        colors = _normalize_list_field("colors", detection.colors)
-        material = _normalize_scalar_field("material", detection.material)
-        pattern = _normalize_scalar_field("pattern", detection.pattern)
-        fit_tags = _normalize_list_field("fit_tags", detection.fit_tags)
-        silhouette = _normalize_scalar_field("silhouette", detection.silhouette)
-        attributes = _normalize_list_field("attributes", detection.attributes)
         confidence = _clamp_confidence(detection.confidence)
         bbox = detection.bbox if isinstance(detection.bbox, dict) else None
-
-        if (
-            role is None
-            and category is None
-            and subcategory is None
-            and not colors
-            and material is None
-            and pattern is None
-            and not fit_tags
-            and silhouette is None
-            and not attributes
-        ):
+        if role is None and not any(_metadata_has_value(value) for value in normalized_metadata.values()):
             return None
 
+        raw_sort_index = getattr(detection, "sort_index", None)
+        sort_index = raw_sort_index if isinstance(raw_sort_index, int) else fallback_sort_index
         return NormalizedWearDetection(
             role=role,
-            category=category,
-            subcategory=subcategory,
-            colors=colors,
-            material=material,
-            pattern=pattern,
-            fit_tags=fit_tags,
-            silhouette=silhouette,
-            attributes=attributes,
+            normalized_metadata=normalized_metadata,
+            field_confidences=field_confidences,
+            field_notes=field_notes,
             confidence=confidence,
             bbox=bbox,
+            sort_index=sort_index,
         )
 
     def _build_detection_filename(self, *, wear_log_id: UUID, mime_type: str) -> str:
@@ -604,44 +639,63 @@ def crop_image(
     return output.getvalue(), mime_type, cropped.width, cropped.height
 
 
-def _normalize_scalar_field(field_name: str, raw_value: Any) -> str | None:
-    normalized = normalize_field_value(
-        field_name=field_name,
-        raw_value=raw_value,
-        applicability_state=ApplicabilityState.VALUE,
-        confidence=None,
-    )
-    value = normalized.canonical_value
-    if isinstance(value, str):
-        cleaned = value.strip()
-        return cleaned or None
-    return None
+def _build_detection_metadata_payload(detection: DetectedOutfitItem) -> dict[str, Any]:
+    metadata = getattr(detection, "metadata", None)
+    if isinstance(metadata, dict) and metadata:
+        return dict(metadata)
 
+    payload: dict[str, Any] = {}
 
-def _normalize_list_field(field_name: str, raw_value: Any) -> list[str]:
-    normalized = normalize_field_value(
-        field_name=field_name,
-        raw_value=raw_value,
-        applicability_state=ApplicabilityState.VALUE,
-        confidence=None,
-    )
-    value = normalized.canonical_value
-    if not isinstance(value, list):
-        return []
+    category = _as_string(getattr(detection, "category", None))
+    if category is not None:
+        payload["category"] = {
+            "value": category,
+            "confidence": None,
+            "applicability_state": "value",
+            "notes": None,
+        }
 
-    deduped: list[str] = []
-    seen: set[str] = set()
+    subcategory = _as_string(getattr(detection, "subcategory", None))
+    if subcategory is not None:
+        payload["subcategory"] = {
+            "value": subcategory,
+            "confidence": None,
+            "applicability_state": "value",
+            "notes": None,
+        }
 
-    for item in value:
-        if not isinstance(item, str):
+    colors = _as_string_list(getattr(detection, "colors", None))
+    if colors:
+        payload["colors"] = {
+            "values": colors,
+            "confidence": None,
+            "applicability_state": "value",
+            "notes": None,
+        }
+
+    for field_name in ("material", "pattern", "silhouette"):
+        value = _as_string(getattr(detection, field_name, None))
+        if value is None:
             continue
-        lowered = item.lower()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        deduped.append(item)
+        payload[field_name] = {
+            "value": value,
+            "confidence": None,
+            "applicability_state": "value",
+            "notes": None,
+        }
 
-    return deduped
+    for field_name in ("fit_tags", "attributes"):
+        values = _as_string_list(getattr(detection, field_name, None))
+        if not values:
+            continue
+        payload[field_name] = {
+            "values": values,
+            "confidence": None,
+            "applicability_state": "value",
+            "notes": None,
+        }
+
+    return payload
 
 
 def _normalize_role(
@@ -694,39 +748,88 @@ def _infer_role_from_category_subcategory(
             return "eyewear"
         return "accessory"
 
-    if subcategory in {"cardigan", "blazer", "jacket", "coat", "trench coat", "vest"}:
+    if subcategory in {
+        "cardigan",
+        "blazer",
+        "jacket",
+        "coat",
+        "trench_coat",
+        "vest",
+        "denim_jacket",
+        "leather_jacket",
+        "puffer_jacket",
+        "bomber_jacket",
+        "shacket",
+        "rain_jacket",
+    }:
         return "outerwear"
     if subcategory in {
-        "t-shirt",
+        "t_shirt",
         "shirt",
         "blouse",
-        "tank top",
+        "tank_top",
         "camisole",
         "polo",
         "sweater",
         "sweatshirt",
         "hoodie",
         "bodysuit",
+        "knit_top",
+        "tunic",
+        "vest_top",
     }:
         return "top"
-    if subcategory in {"jeans", "trousers", "shorts", "skirt", "leggings", "joggers"}:
+    if subcategory in {
+        "jeans",
+        "trousers",
+        "shorts",
+        "skirt",
+        "leggings",
+        "joggers",
+        "cargo_pants",
+    }:
         return "bottom"
-    if subcategory in {"sneakers", "boots", "heels", "flats", "loafers", "sandals", "mules"}:
+    if subcategory in {
+        "sneakers",
+        "boots",
+        "ankle_boots",
+        "knee_high_boots",
+        "heels",
+        "pumps",
+        "flats",
+        "ballet_flats",
+        "loafers",
+        "sandals",
+        "mules",
+        "slippers",
+        "clogs",
+    }:
         return "footwear"
-    if subcategory in {"tote", "shoulder bag", "crossbody", "backpack", "clutch"}:
+    if subcategory in {
+        "tote",
+        "shoulder_bag",
+        "crossbody",
+        "backpack",
+        "clutch",
+        "mini_bag",
+        "top_handle_bag",
+        "hobo_bag",
+        "satchel",
+        "evening_bag",
+    }:
         return "bag"
-    if subcategory in {"necklace", "earrings", "bracelet", "ring", "watch"}:
+    if subcategory in {"necklace", "earrings", "bracelet", "ring", "watch", "anklet", "brooch"}:
         return "jewelry"
     if subcategory in {
-        "mini dress",
-        "midi dress",
-        "maxi dress",
-        "slip dress",
-        "shirt dress",
-        "sweater dress",
+        "shirt_dress",
+        "sweater_dress",
+        "bodycon_dress",
+        "wrap_dress",
+        "strapless_dress",
+        "evening_dress",
     }:
         return "dress"
-    if subcategory in {"jumpsuit", "romper"}:
+    if subcategory in {"jumpsuit", "romper", "catsuit", "overalls"}:
         return "full_body"
     if subcategory == "hat":
         return "hat"
@@ -760,6 +863,27 @@ def _infer_category_from_role(role: str | None) -> str | None:
     return None
 
 
+def _should_surface_detection_match(
+    *,
+    detection: NormalizedWearDetection,
+    match_result: WearDetectionMatchResult,
+) -> bool:
+    if not match_result.candidates:
+        return False
+
+    role = detection.role
+    category = detection.normalized_metadata.get("category")
+    is_non_core_accessory = (
+        role in _NON_CORE_ACCESSORY_ROLES
+        or category in {"bags", "accessories", "jewelry"}
+    )
+    if not is_non_core_accessory:
+        return True
+
+    top_score = match_result.candidates[0].score if match_result.candidates else 0.0
+    return match_result.exact_match or top_score >= _NON_CORE_ACCESSORY_MIN_SCORE
+
+
 def _clamp_confidence(value: float | None) -> float | None:
     if value is None:
         return None
@@ -768,6 +892,45 @@ def _clamp_confidence(value: float | None) -> float | None:
     except (TypeError, ValueError):
         return None
     return max(0.0, min(1.0, numeric))
+
+
+def _as_string(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _as_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            stripped = item.strip()
+            if not stripped:
+                continue
+            lowered = stripped.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            deduped.append(stripped)
+        return deduped
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    return []
+
+
+def _metadata_has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return bool(_as_string_list(value))
+    return True
 
 
 def _rounded_bbox_key(

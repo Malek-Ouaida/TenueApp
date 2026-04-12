@@ -4,7 +4,7 @@ import base64
 import json
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Protocol
 
@@ -15,12 +15,16 @@ from app.domains.closet.taxonomy import (
     ATTRIBUTES,
     CATEGORY_SUBCATEGORIES,
     COLORS,
+    CONTROLLED_SCALAR_VALUES,
     FIT_TAGS,
+    LIST_FIELD_NAMES,
     MATERIALS,
     PATTERNS,
     SILHOUETTES,
+    SUPPORTED_FIELD_ORDER,
     is_valid_category_subcategory_pair,
 )
+from app.domains.wear.metadata import normalize_detected_metadata_fields
 from app.domains.wear.models import WearProviderResultStatus
 
 OUTFIT_DETECTION_TASK_TYPE = "outfit_detection"
@@ -88,17 +92,19 @@ _ROLE_SYNONYMS = {
 
 @dataclass(frozen=True)
 class DetectedOutfitItem:
-    role: str | None
-    category: str | None
-    subcategory: str | None
-    colors: list[str]
-    material: str | None
-    pattern: str | None
-    fit_tags: list[str]
-    silhouette: str | None
-    attributes: list[str]
-    confidence: float | None
-    bbox: dict[str, float] | None
+    role: str | None = None
+    category: str | None = None
+    subcategory: str | None = None
+    colors: list[str] = field(default_factory=list)
+    material: str | None = None
+    pattern: str | None = None
+    fit_tags: list[str] = field(default_factory=list)
+    silhouette: str | None = None
+    attributes: list[str] = field(default_factory=list)
+    confidence: float | None = None
+    bbox: dict[str, float] | None = None
+    metadata: dict[str, Any] | None = None
+    sort_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -232,13 +238,47 @@ class GeminiOutfitDetectionProvider:
             "fallback" if selected_result is fallback_result else "primary"
         )
 
+        merged_detections = selected_result.detections
+        if _should_run_lower_body_recovery(merged_detections):
+            lower_body_result = self._run_detection_pass(
+                image_bytes=image_bytes,
+                filename=filename,
+                mime_type=mime_type,
+                prompt=_build_lower_body_recovery_prompt(
+                    filename=filename,
+                    mime_type=mime_type,
+                ),
+                pass_name="lower_body_recovery",
+            )
+            merged_payload["lower_body_recovery_attempted"] = True
+            if lower_body_result.status == WearProviderResultStatus.FAILED:
+                merged_payload["lower_body_recovery_status"] = "failed"
+                merged_payload["lower_body_recovery_reason_code"] = (
+                    lower_body_result.sanitized_payload.get("reason_code")
+                )
+                merged_payload["lower_body_recovery_message"] = (
+                    lower_body_result.sanitized_payload.get("message")
+                )
+            else:
+                merged_payload["lower_body_recovery_status"] = "succeeded"
+                merged_payload["lower_body_recovery_detections_count"] = len(
+                    lower_body_result.detections
+                )
+                merged_detections = _merge_lower_body_recovery_detections(
+                    base_detections=merged_detections,
+                    recovery_detections=lower_body_result.detections,
+                )
+                merged_payload["detections_count_after_lower_body_recovery"] = len(
+                    merged_detections
+                )
+
         return OutfitDetectionResult(
             provider_name=selected_result.provider_name,
             provider_model=selected_result.provider_model,
             provider_version=selected_result.provider_version,
             status=selected_result.status,
             sanitized_payload=merged_payload,
-            detections=selected_result.detections,
+            detections=merged_detections,
         )
 
     def _run_detection_pass(
@@ -250,6 +290,7 @@ class GeminiOutfitDetectionProvider:
         prompt: str,
         pass_name: str,
     ) -> OutfitDetectionResult:
+        url = resolve_gemini_endpoint(base_url=self.base_url, model=self.model)
         request_payload = {
             "contents": [
                 {
@@ -265,31 +306,30 @@ class GeminiOutfitDetectionProvider:
                     ],
                 }
             ],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "responseJsonSchema": _response_json_schema(),
-                "temperature": 0.05,
-                "topP": 0.9,
-                "maxOutputTokens": 3072,
-            },
+            "generationConfig": _build_generation_config(),
         }
-
-        url = f"{self.base_url}/models/{self.model}:generateContent"
 
         try:
             raw_response = self._post_json(url=url, payload=request_payload)
         except urllib.error.HTTPError as exc:
             error_body = _read_http_error_body(exc)
+            extracted_error = _extract_http_error_payload(error_body)
             return OutfitDetectionResult(
                 provider_name=self.provider_name,
                 provider_model=self.model or None,
                 provider_version=None,
                 status=_failure_status(),
                 sanitized_payload={
-                    "reason_code": "http_error",
-                    "message": f"Gemini request failed with HTTP {exc.code}.",
+                    "reason_code": (
+                        "invalid_request" if exc.code == 400 else "http_error"
+                    ),
+                    "message": _format_http_error_message(
+                        status_code=exc.code,
+                        extracted_error=extracted_error,
+                    ),
                     "http_status": exc.code,
-                    "error_body": error_body,
+                    "error_body": extracted_error,
+                    "request_url": url,
                     "pass_name": pass_name,
                 },
                 detections=[],
@@ -405,6 +445,15 @@ class GeminiOutfitDetectionProvider:
         )
 
 
+def resolve_gemini_endpoint(*, base_url: str, model: str) -> str:
+    normalized = base_url.strip().rstrip("/")
+    if normalized.endswith(":generateContent"):
+        return normalized
+    if "/models/" in normalized:
+        return f"{normalized}:generateContent"
+    return f"{normalized}/models/{model}:generateContent"
+
+
 def build_wear_detection_provider() -> OutfitDetectionProvider:
     provider_name = settings.wear_detection_provider.strip().lower()
 
@@ -429,23 +478,46 @@ def build_wear_detection_provider() -> OutfitDetectionProvider:
 
 def _build_primary_prompt(*, filename: str, mime_type: str) -> str:
     return f"""
-You are extracting structured outfit detections from a single outfit photo for a wardrobe app.
+You are extracting structured outfit detections from a single outfit photo for Tenue.
 
 Your goal is to identify visible fashion items the person is actually wearing or clearly carrying.
 
-Return JSON only and follow the provided schema exactly.
+Return JSON only.
 
-Important behavior:
-- Prefer the wardrobe app's canonical taxonomy values.
-- Detect distinct visible items separately.
-- Layered outfits matter: if both a base top and an outer layer are visible, return both.
-- Do not invent hidden items.
-- Do not return duplicate detections for the same item.
-- Use null only when a field is truly unclear.
-- If an item is clearly visible, do not omit it just because the exact subtype is uncertain.
-- If the torso is visible, there is usually at least one upper-body garment.
-- If the hips/legs are visible, there is usually at least one lower-body garment, unless the person is wearing a dress or a one-piece.
-- Accessories should not replace core garments. If a bag or jewelry is visible along with clothing, include the clothing too.
+Return exactly one JSON object with this shape:
+{{
+  "detections": [
+    {{
+      "role": "top",
+      "confidence": 0.93,
+      "sort_index": 0,
+      "bbox": {{"x": 0.1, "y": 0.1, "width": 0.5, "height": 0.4}},
+      "metadata": {{
+        "category": {{"value": "tops", "confidence": 0.93, "applicability_state": "value"}},
+        "subcategory": {{"value": "t_shirt", "confidence": 0.91, "applicability_state": "value"}},
+        "primary_color": {{"value": "black", "confidence": 0.88, "applicability_state": "value"}},
+        "secondary_colors": {{"values": ["white"], "confidence": 0.62, "applicability_state": "value"}},
+        "fit_tags": {{"values": ["relaxed"], "confidence": 0.58, "applicability_state": "value"}},
+        "material": {{"applicability_state": "unknown"}}
+      }}
+    }}
+  ]
+}}
+
+Critical rules:
+- Use the shared closet taxonomy exactly. Canonical values must use underscore form.
+- Each detection must include `role`, item-level `confidence`, `bbox`, `sort_index`, and `metadata`.
+- `metadata` uses the same per-field structure as closet extraction:
+  - scalar fields: `{{"value": ..., "confidence": ..., "applicability_state": ..., "notes": ...}}`
+  - list fields: `{{"values": [...], "confidence": ..., "applicability_state": ..., "notes": ...}}`
+- For fields that are not visually inferable, set `applicability_state` to `"unknown"` and omit `value` / `values` instead of guessing.
+- When a structural cue is visible, do not leave it unknown. Capture visible neckline, sleeve shape, strap type, leg shape, rise, silhouette, closures, pockets, and trim or embellishment cues such as lace.
+- For tops, dresses, and outerwear, prioritize visible neckline and sleeve attributes. For bottoms, prioritize visible leg shape, rise, and silhouette.
+- Do not guess non-visual fields. Brand, title, occasion, season, statement level, and versatility should usually be unknown unless they are visually obvious.
+- Detect separate visible layers separately. If both a base top and outerwear are visible, return both.
+- Do not invent hidden items. Do not return duplicate detections.
+- Accessories do not replace garments. If clothing is visible, return the clothing too.
+- Use `sort_index` to order detections from top-to-bottom / primary visible garment order.
 
 Canonical category values:
 {_format_allowed_categories()}
@@ -471,34 +543,32 @@ Canonical silhouette values:
 Canonical attribute values:
 {_format_allowed_attributes()}
 
+Canonical formality values:
+{_format_allowed_values("formality")}
+
+Canonical warmth values:
+{_format_allowed_values("warmth")}
+
+Canonical coverage values:
+{_format_allowed_values("coverage")}
+
+Canonical statement level values:
+{_format_allowed_values("statement_level")}
+
+Canonical versatility values:
+{_format_allowed_values("versatility")}
+
 Role rules:
 - role must be one of: {", ".join(_ALLOWED_ROLES)}
-- dresses should usually use role="dress" and category="dresses"
-- jumpsuits and rompers should usually use role="full_body" and category="one_piece"
-- cardigans, blazers, jackets, coats, trench coats, and vests should use role="outerwear" and category="outerwear"
-- t-shirts, shirts, blouses, tank tops, camisoles, polos, sweaters, sweatshirts, hoodies, and bodysuits should usually use role="top" and category="tops"
-- jeans, trousers, shorts, skirts, leggings, and joggers should usually use role="bottom" and category="bottoms"
-- sneakers, boots, heels, flats, loafers, sandals, and mules should usually use role="footwear" and category="shoes"
-- bags should usually use role="bag" and category="bags"
-- necklaces, earrings, bracelets, rings, and watches should usually use role="jewelry" and category="jewelry"
-- hats, scarves, sunglasses, belts, and wallets should usually use accessory-style roles/categories
-
-Field rules:
-- category should be a canonical category value when possible
-- subcategory should be a canonical subcategory value when possible
-- colors should be a short list of dominant visible colors from the canonical color values
-- material should only be set when visually plausible
-- pattern should only be set when visually plausible
-- fit_tags should include visible shape cues like wide_leg, straight_leg, fitted, cropped, oversized, relaxed, slim, tapered, bodycon
-- silhouette should only be set when visually plausible
-- attributes should include visible garment cues like v_neck, crew_neck, sleeveless, short_sleeve, long_sleeve, collared, halter, racerback, wrap, off_shoulder
-- confidence must be a number between 0 and 1
-- bbox must be normalized to the image size with keys x, y, width, height and values between 0 and 1
-
-Examples:
-- A sleeveless fitted ribbed top can map to category="tops", subcategory="tank top", fit_tags=["fitted"], attributes=["sleeveless"]
-- A cardigan layered over a top should be returned separately as role="outerwear", category="outerwear", subcategory="cardigan"
-- Wide-leg denim pants can map to category="bottoms", subcategory="jeans" or "trousers", fit_tags=["wide_leg"], silhouette="wide_leg"
+- dresses usually use role="dress" and category="dresses"
+- jumpsuits, rompers, catsuits, and overalls usually use role="full_body" and category="one_piece"
+- outer layers use role="outerwear" and category="outerwear"
+- tops use role="top" and category="tops"
+- bottoms use role="bottom" and category="bottoms"
+- shoes use role="footwear" and category="shoes"
+- bags use role="bag" and category="bags"
+- jewelry uses role="jewelry" and category="jewelry"
+- hats, scarves, eyewear, belts, socks, tights, and similar pieces use accessory-style roles/categories
 
 Input file:
 - filename: {filename}
@@ -510,20 +580,37 @@ def _build_fallback_prompt(*, filename: str, mime_type: str) -> str:
     return f"""
 You are performing a second-pass recovery for outfit detection on a single outfit photo.
 
-The first pass was sparse or incomplete. Your job is to recover missed clothing items while still staying truthful to the image.
+The first pass was sparse or incomplete. Recover missed wearable items while staying truthful to the image.
 
-Return JSON only and follow the provided schema exactly.
+Return JSON only.
+
+Return exactly one JSON object with this shape:
+{{
+  "detections": [
+    {{
+      "role": "top",
+      "confidence": 0.93,
+      "sort_index": 0,
+      "bbox": {{"x": 0.1, "y": 0.1, "width": 0.5, "height": 0.4}},
+      "metadata": {{
+        "category": {{"value": "tops", "applicability_state": "value"}},
+        "subcategory": {{"value": "t_shirt", "applicability_state": "value"}}
+      }}
+    }}
+  ]
+}}
 
 Recovery rules:
 - Focus on core garments first.
-- If a visible upper-body garment exists, return it.
-- If a visible outer layer exists, return it separately from the base top.
-- If a visible lower-body garment exists, return it.
-- Use role="dress" for dresses and role="full_body" for jumpsuits/rompers.
-- Only after core garments, include clearly visible bags/accessories.
-- Never return an empty detections array unless no visible wearable item is actually present in the image.
-- When uncertain between close fashion labels, choose the nearest canonical taxonomy value rather than omitting the item.
-- Prefer visible structural metadata over generic labels.
+- If an upper-body garment is visible, return it.
+- If an outer layer is visible over a base top, return both.
+- If a lower-body garment is visible, return it unless the look is clearly a dress or one-piece.
+- Only after core garments, include clearly visible bags/accessories/jewelry.
+- Never return an empty detections array unless no visible wearable item is present.
+- When uncertain between nearby labels, choose the nearest canonical taxonomy value instead of omitting the item.
+- Encode visible structural cues in `subcategory`, `fit_tags`, `silhouette`, and `attributes`.
+- If the neckline, sleeve shape, leg shape, pockets, or trim details are visible, encode them instead of leaving those fields unknown.
+- Keep non-visual metadata unknown rather than guessed.
 
 Canonical category values:
 {_format_allowed_categories()}
@@ -549,23 +636,49 @@ Canonical silhouette values:
 Canonical attribute values:
 {_format_allowed_attributes()}
 
-Practical guidance:
-- A blouse-like white top with visible v-neck or decorative trim should not be collapsed into a generic t-shirt if blouse-like structure is visible.
-- A sleeveless fitted knit top usually maps to category="tops" with subcategory="tank top" or "sweater", depending on appearance.
-- A cardigan should be returned separately as role="outerwear", category="outerwear", subcategory="cardigan" when visible over another top.
-- Wide-leg denim bottoms should still be mapped to role="bottom", category="bottoms", and the closest supported subcategory such as "jeans" or "trousers", with fit_tags=["wide_leg"] when visible.
-- Mirror selfies and phone occlusion do not justify omitting clearly visible garments.
-- If neckline, sleeve shape, or silhouette are visible, encode them in attributes / fit_tags / silhouette.
+Input file:
+- filename: {filename}
+- mime_type: {mime_type}
+""".strip()
 
-Field rules:
-- role must be one of: {", ".join(_ALLOWED_ROLES)}
-- category should be a canonical category value when possible
-- subcategory should be a canonical subcategory value when possible
-- colors should use canonical color values
-- material and pattern should only be set when visually plausible
-- fit_tags, silhouette, and attributes should capture visible garment identity cues
-- confidence must be a number between 0 and 1
-- bbox must be normalized to the image size with keys x, y, width, height and values between 0 and 1
+
+def _build_lower_body_recovery_prompt(*, filename: str, mime_type: str) -> str:
+    return f"""
+You are performing a targeted lower-body recovery pass for a single outfit photo.
+
+The earlier pass likely found an upper-body garment but missed the lower-body garment.
+
+Return JSON only.
+
+Return exactly one JSON object with this shape:
+{{
+  "detections": [
+    {{
+      "role": "bottom",
+      "confidence": 0.9,
+      "sort_index": 1,
+      "bbox": {{"x": 0.15, "y": 0.42, "width": 0.55, "height": 0.42}},
+      "metadata": {{
+        "category": {{"value": "bottoms", "applicability_state": "value"}},
+        "subcategory": {{"value": "jeans", "applicability_state": "value"}},
+        "primary_color": {{"value": "beige", "applicability_state": "value"}}
+      }}
+    }}
+  ]
+}}
+
+Rules:
+- Focus only on the lower-body garment the person is wearing.
+- If pants, jeans, shorts, or a skirt are visible, return that garment.
+- Do not return tops, bags, jewelry, hats, scarves, or phones.
+- Do not return accessories or handheld objects.
+- If no lower-body garment is clearly visible, return `{{"detections":[]}}`.
+
+Canonical subcategory values:
+{_format_allowed_subcategories()}
+
+Canonical color values:
+{_format_allowed_colors()}
 
 Input file:
 - filename: {filename}
@@ -573,125 +686,12 @@ Input file:
 """.strip()
 
 
-def _response_json_schema() -> dict[str, Any]:
+def _build_generation_config() -> dict[str, Any]:
     return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["detections"],
-        "properties": {
-            "detections": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": [
-                        "role",
-                        "category",
-                        "subcategory",
-                        "colors",
-                        "material",
-                        "pattern",
-                        "fit_tags",
-                        "silhouette",
-                        "attributes",
-                        "confidence",
-                        "bbox",
-                    ],
-                    "properties": {
-                        "role": {
-                            "anyOf": [
-                                {"type": "string", "enum": list(_ALLOWED_ROLES)},
-                                {"type": "null"},
-                            ]
-                        },
-                        "category": {
-                            "anyOf": [
-                                {"type": "string", "enum": list(_ALLOWED_CATEGORIES)},
-                                {"type": "null"},
-                            ]
-                        },
-                        "subcategory": {
-                            "anyOf": [
-                                {"type": "string", "enum": list(_ALLOWED_SUBCATEGORIES)},
-                                {"type": "null"},
-                            ]
-                        },
-                        "colors": {
-                            "type": "array",
-                            "items": {
-                                "type": "string",
-                                "enum": list(_ALLOWED_COLORS),
-                            },
-                            "maxItems": 8,
-                        },
-                        "material": {
-                            "anyOf": [
-                                {"type": "string", "enum": list(_ALLOWED_MATERIALS)},
-                                {"type": "null"},
-                            ]
-                        },
-                        "pattern": {
-                            "anyOf": [
-                                {"type": "string", "enum": list(_ALLOWED_PATTERNS)},
-                                {"type": "null"},
-                            ]
-                        },
-                        "fit_tags": {
-                            "type": "array",
-                            "items": {
-                                "type": "string",
-                                "enum": list(_ALLOWED_FIT_TAGS),
-                            },
-                            "maxItems": 8,
-                        },
-                        "silhouette": {
-                            "anyOf": [
-                                {"type": "string", "enum": list(_ALLOWED_SILHOUETTES)},
-                                {"type": "null"},
-                            ]
-                        },
-                        "attributes": {
-                            "type": "array",
-                            "items": {
-                                "type": "string",
-                                "enum": list(_ALLOWED_ATTRIBUTES),
-                            },
-                            "maxItems": 12,
-                        },
-                        "confidence": {
-                            "anyOf": [
-                                {"type": "number", "minimum": 0, "maximum": 1},
-                                {"type": "null"},
-                            ]
-                        },
-                        "bbox": {
-                            "anyOf": [
-                                {
-                                    "type": "object",
-                                    "additionalProperties": False,
-                                    "required": ["x", "y", "width", "height"],
-                                    "properties": {
-                                        "x": {"type": "number", "minimum": 0, "maximum": 1},
-                                        "y": {"type": "number", "minimum": 0, "maximum": 1},
-                                        "width": {
-                                            "type": "number",
-                                            "minimum": 0,
-                                            "maximum": 1,
-                                        },
-                                        "height": {
-                                            "type": "number",
-                                            "minimum": 0,
-                                            "maximum": 1,
-                                        },
-                                    },
-                                },
-                                {"type": "null"},
-                            ]
-                        },
-                    },
-                },
-            }
-        },
+        "responseMimeType": "application/json",
+        "temperature": 0.05,
+        "topP": 0.9,
+        "maxOutputTokens": 3072,
     }
 
 
@@ -705,27 +705,34 @@ def _parse_detected_items(payload: Any) -> list[DetectedOutfitItem]:
 
     parsed_items: list[DetectedOutfitItem] = []
 
-    for item in raw_items:
+    for index, item in enumerate(raw_items):
         if not isinstance(item, dict):
             continue
 
+        raw_metadata = _metadata_payload_from_detection_item(item)
+        normalized_metadata, field_confidences, field_notes = normalize_detected_metadata_fields(
+            dict(raw_metadata)
+        )
+        category = _as_string(normalized_metadata.get("category"))
+        subcategory = _as_string(normalized_metadata.get("subcategory"))
         role = _normalize_role(
             item.get("role"),
-            category=item.get("category"),
-            subcategory=item.get("subcategory"),
+            category=category,
+            subcategory=subcategory,
         )
-        category = _normalize_scalar_field("category", item.get("category"))
-        subcategory = _normalize_scalar_field("subcategory", item.get("subcategory"))
 
         if subcategory is not None and category is None:
             category = derive_category_for_subcategory(subcategory)
+            normalized_metadata["category"] = category
 
         if category is not None and subcategory is not None:
             if not is_valid_category_subcategory_pair(category=category, subcategory=subcategory):
                 subcategory = None
+                normalized_metadata["subcategory"] = None
 
         if category is None:
             category = _infer_category_from_role(role)
+            normalized_metadata["category"] = category
 
         if role is None:
             role = _infer_role_from_category_subcategory(
@@ -733,25 +740,13 @@ def _parse_detected_items(payload: Any) -> list[DetectedOutfitItem]:
                 subcategory=subcategory,
             )
 
-        colors = _normalize_list_field("colors", item.get("colors"))
-        material = _normalize_scalar_field("material", item.get("material"))
-        pattern = _normalize_scalar_field("pattern", item.get("pattern"))
-        fit_tags = _normalize_list_field("fit_tags", item.get("fit_tags"))
-        silhouette = _normalize_scalar_field("silhouette", item.get("silhouette"))
-        attributes = _normalize_list_field("attributes", item.get("attributes"))
         confidence = _normalize_confidence(item.get("confidence"))
         bbox = _normalize_bbox(item.get("bbox"))
+        sort_index = _normalize_sort_index(item.get("sort_index"), default=index)
 
         if (
             role is None
-            and category is None
-            and subcategory is None
-            and not colors
-            and material is None
-            and pattern is None
-            and not fit_tags
-            and silhouette is None
-            and not attributes
+            and not _metadata_contains_values(normalized_metadata)
         ):
             continue
 
@@ -760,18 +755,155 @@ def _parse_detected_items(payload: Any) -> list[DetectedOutfitItem]:
                 role=role,
                 category=category,
                 subcategory=subcategory,
-                colors=colors,
-                material=material,
-                pattern=pattern,
-                fit_tags=fit_tags,
-                silhouette=silhouette,
-                attributes=attributes,
+                colors=_legacy_colors_from_metadata(normalized_metadata),
+                material=_as_string(normalized_metadata.get("material")),
+                pattern=_as_string(normalized_metadata.get("pattern")),
+                fit_tags=_as_string_list(normalized_metadata.get("fit_tags")),
+                silhouette=_as_string(normalized_metadata.get("silhouette")),
+                attributes=_as_string_list(normalized_metadata.get("attributes")),
                 confidence=confidence,
                 bbox=bbox,
+                metadata=_serialize_metadata_payload(
+                    raw_metadata=raw_metadata,
+                    normalized_metadata=normalized_metadata,
+                    field_confidences=field_confidences,
+                    field_notes=field_notes,
+                ),
+                sort_index=sort_index,
             )
         )
 
     return _dedupe_detections(parsed_items)
+
+
+def _metadata_payload_from_detection_item(item: dict[str, Any]) -> dict[str, Any]:
+    raw_metadata = item.get("metadata")
+    if isinstance(raw_metadata, dict):
+        return raw_metadata
+
+    metadata: dict[str, Any] = {}
+    for field_name in (
+        "category",
+        "subcategory",
+        "colors",
+        "material",
+        "pattern",
+        "fit_tags",
+        "silhouette",
+        "attributes",
+    ):
+        raw_value = item.get(field_name)
+        payload = _legacy_metadata_field_payload(field_name=field_name, raw_value=raw_value)
+        if payload is not None:
+            metadata[field_name] = payload
+    return metadata
+
+
+def _legacy_metadata_field_payload(*, field_name: str, raw_value: Any) -> dict[str, Any] | None:
+    if field_name in {"colors", "fit_tags", "attributes"}:
+        values = _as_string_list(raw_value)
+        if not values:
+            return None
+        return {
+            "values": values,
+            "confidence": None,
+            "applicability_state": ApplicabilityState.VALUE.value,
+            "notes": None,
+        }
+
+    value = _as_string(raw_value)
+    if value is None:
+        return None
+    return {
+        "value": value,
+        "confidence": None,
+        "applicability_state": ApplicabilityState.VALUE.value,
+        "notes": None,
+    }
+
+
+def _serialize_metadata_payload(
+    *,
+    raw_metadata: dict[str, Any],
+    normalized_metadata: dict[str, Any],
+    field_confidences: dict[str, float | None],
+    field_notes: dict[str, str],
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for field_name in SUPPORTED_FIELD_ORDER:
+        raw_field = raw_metadata.get(field_name)
+        applicability_state = _extract_raw_applicability_state(raw_field)
+        value = normalized_metadata.get(field_name)
+        if applicability_state is None:
+            applicability_state = (
+                ApplicabilityState.VALUE.value if _metadata_value_has_value(value) else ApplicabilityState.UNKNOWN.value
+            )
+
+        if field_name in LIST_FIELD_NAMES:
+            payload[field_name] = {
+                "values": _as_string_list(value) or None,
+                "confidence": field_confidences.get(field_name),
+                "applicability_state": applicability_state,
+                "notes": field_notes.get(field_name),
+            }
+            continue
+
+        payload[field_name] = {
+            "value": _as_string(value),
+            "confidence": field_confidences.get(field_name),
+            "applicability_state": applicability_state,
+            "notes": field_notes.get(field_name),
+        }
+    return payload
+
+
+def _extract_raw_applicability_state(raw_field: Any) -> str | None:
+    if not isinstance(raw_field, dict):
+        return None
+    raw_state = raw_field.get("applicability_state")
+    if isinstance(raw_state, ApplicabilityState):
+        return raw_state.value
+    if not isinstance(raw_state, str):
+        return None
+    normalized = raw_state.strip().lower()
+    if normalized in {
+        ApplicabilityState.VALUE.value,
+        ApplicabilityState.UNKNOWN.value,
+        ApplicabilityState.NOT_APPLICABLE.value,
+    }:
+        return normalized
+    return None
+
+
+def _metadata_contains_values(metadata: dict[str, Any]) -> bool:
+    return any(_metadata_value_has_value(value) for value in metadata.values())
+
+
+def _metadata_value_has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return bool(_as_string_list(value))
+    return True
+
+
+def _field_payload_has_value(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if "values" in payload:
+        return bool(_as_string_list(payload.get("values")))
+    return _as_string(payload.get("value")) is not None
+
+
+def _legacy_colors_from_metadata(metadata: dict[str, Any]) -> list[str]:
+    colors: list[str] = []
+    primary_color = _as_string(metadata.get("primary_color"))
+    if primary_color is not None:
+        colors.append(primary_color)
+    colors.extend(_as_string_list(metadata.get("secondary_colors")))
+    return colors
 
 
 def _dedupe_detections(detections: list[DetectedOutfitItem]) -> list[DetectedOutfitItem]:
@@ -824,6 +956,46 @@ def _should_run_fallback(detections: list[DetectedOutfitItem]) -> bool:
     return True
 
 
+def _should_run_lower_body_recovery(detections: list[DetectedOutfitItem]) -> bool:
+    roles = {item.role for item in detections if item.role}
+    has_upper = bool(roles & _UPPER_BODY_ROLES)
+    has_lower = bool(roles & _LOWER_BODY_ROLES)
+    has_full_body = bool(roles & {"dress", "full_body"})
+    return has_upper and not has_lower and not has_full_body
+
+
+def _merge_lower_body_recovery_detections(
+    *,
+    base_detections: list[DetectedOutfitItem],
+    recovery_detections: list[DetectedOutfitItem],
+) -> list[DetectedOutfitItem]:
+    if any(item.role in _LOWER_BODY_ROLES for item in base_detections):
+        return base_detections
+
+    recovery_candidates = [
+        item for item in recovery_detections if item.role in {"bottom"}
+    ]
+    if not recovery_candidates:
+        return base_detections
+
+    selected_recovery = sorted(
+        recovery_candidates,
+        key=lambda item: (
+            -(item.confidence or 0.0),
+            item.sort_index if item.sort_index is not None else 999,
+        ),
+    )[0]
+    merged = _dedupe_detections(base_detections + [selected_recovery])
+    ordered = sorted(
+        merged,
+        key=lambda item: item.sort_index if item.sort_index is not None else 999,
+    )
+    return [
+        replace(item, sort_index=index)
+        for index, item in enumerate(ordered)
+    ]
+
+
 def _choose_better_result(
     primary: OutfitDetectionResult,
     fallback: OutfitDetectionResult,
@@ -849,6 +1021,7 @@ def _score_detection_result(detections: list[DetectedOutfitItem]) -> int:
         score += 3
 
     for item in detections:
+        metadata = item.metadata if isinstance(item.metadata, dict) else {}
         if item.material:
             score += 1
         if item.pattern:
@@ -859,6 +1032,12 @@ def _score_detection_result(detections: list[DetectedOutfitItem]) -> int:
             score += 1
         if item.attributes:
             score += min(2, len(item.attributes))
+        if _field_payload_has_value(metadata.get("primary_color")):
+            score += 1
+        if _field_payload_has_value(metadata.get("secondary_colors")):
+            score += 1
+        if _field_payload_has_value(metadata.get("formality")):
+            score += 1
 
     return score
 
@@ -915,38 +1094,94 @@ def _infer_role_from_category_subcategory(
             return "eyewear"
         return "accessory"
 
-    if subcategory in {"cardigan", "blazer", "jacket", "coat", "trench coat", "vest"}:
+    if subcategory in {
+        "cardigan",
+        "blazer",
+        "jacket",
+        "coat",
+        "trench_coat",
+        "vest",
+        "denim_jacket",
+        "leather_jacket",
+        "puffer_jacket",
+        "bomber_jacket",
+        "shacket",
+        "rain_jacket",
+    }:
         return "outerwear"
     if subcategory in {
-        "t-shirt",
+        "t_shirt",
         "shirt",
         "blouse",
-        "tank top",
+        "tank_top",
         "camisole",
         "polo",
         "sweater",
         "sweatshirt",
         "hoodie",
         "bodysuit",
+        "knit_top",
+        "tunic",
+        "vest_top",
     }:
         return "top"
-    if subcategory in {"jeans", "trousers", "shorts", "skirt", "leggings", "joggers"}:
+    if subcategory in {
+        "jeans",
+        "trousers",
+        "shorts",
+        "skirt",
+        "leggings",
+        "joggers",
+        "cargo_pants",
+    }:
         return "bottom"
-    if subcategory in {"sneakers", "boots", "heels", "flats", "loafers", "sandals", "mules"}:
+    if subcategory in {
+        "sneakers",
+        "boots",
+        "ankle_boots",
+        "knee_high_boots",
+        "heels",
+        "pumps",
+        "flats",
+        "ballet_flats",
+        "loafers",
+        "sandals",
+        "mules",
+        "slippers",
+        "clogs",
+    }:
         return "footwear"
-    if subcategory in {"tote", "shoulder bag", "crossbody", "backpack", "clutch"}:
+    if subcategory in {
+        "tote",
+        "shoulder_bag",
+        "crossbody",
+        "backpack",
+        "clutch",
+        "mini_bag",
+        "top_handle_bag",
+        "hobo_bag",
+        "satchel",
+        "evening_bag",
+    }:
         return "bag"
-    if subcategory in {"necklace", "earrings", "bracelet", "ring", "watch"}:
+    if subcategory in {"necklace", "earrings", "bracelet", "ring", "watch", "anklet", "brooch"}:
         return "jewelry"
-    if subcategory in {"mini dress", "midi dress", "maxi dress", "slip dress", "shirt dress", "sweater dress"}:
+    if subcategory in {
+        "shirt_dress",
+        "sweater_dress",
+        "bodycon_dress",
+        "wrap_dress",
+        "strapless_dress",
+        "evening_dress",
+    }:
         return "dress"
-    if subcategory in {"jumpsuit", "romper"}:
+    if subcategory in {"jumpsuit", "romper", "catsuit", "overalls"}:
         return "full_body"
-    if subcategory in {"hat"}:
+    if subcategory == "hat":
         return "hat"
-    if subcategory in {"scarf"}:
+    if subcategory == "scarf":
         return "scarf"
-    if subcategory in {"sunglasses"}:
+    if subcategory == "sunglasses":
         return "eyewear"
 
     return None
@@ -1012,6 +1247,35 @@ def _normalize_list_field(field_name: str, raw_value: Any) -> list[str]:
     return deduped
 
 
+def _as_string(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _as_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            stripped = item.strip()
+            if not stripped:
+                continue
+            lowered = stripped.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            deduped.append(stripped)
+        return deduped
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    return []
+
+
 def _normalize_optional_string(value: Any) -> str | None:
     if value is None:
         return None
@@ -1035,6 +1299,14 @@ def _normalize_confidence(value: Any) -> float | None:
     if numeric > 1:
         return 1.0
     return numeric
+
+
+def _normalize_sort_index(value: Any, *, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int) and value >= 0:
+        return value
+    return default
 
 
 def _normalize_bbox(value: Any) -> dict[str, float] | None:
@@ -1150,6 +1422,54 @@ def _read_http_error_body(exc: urllib.error.HTTPError) -> str:
     return body[:4000]
 
 
+def _extract_http_error_payload(error_body: str) -> dict[str, Any] | str | None:
+    if not error_body.strip():
+        return None
+
+    try:
+        payload = json.loads(error_body)
+    except ValueError:
+        return error_body[:500]
+
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, list):
+        return {"items": payload}
+    return str(payload)
+
+
+def _extract_http_error_message(extracted_error: dict[str, Any] | str | None) -> str | None:
+    if isinstance(extracted_error, str):
+        message = extracted_error.strip()
+        return message or None
+
+    if not isinstance(extracted_error, dict):
+        return None
+
+    nested_error = extracted_error.get("error")
+    if isinstance(nested_error, dict):
+        nested_message = nested_error.get("message")
+        if isinstance(nested_message, str) and nested_message.strip():
+            return nested_message.strip()
+
+    direct_message = extracted_error.get("message")
+    if isinstance(direct_message, str) and direct_message.strip():
+        return direct_message.strip()
+
+    return None
+
+
+def _format_http_error_message(
+    *,
+    status_code: int,
+    extracted_error: dict[str, Any] | str | None,
+) -> str:
+    detail = _extract_http_error_message(extracted_error)
+    if detail:
+        return f"Gemini request failed with HTTP {status_code}: {detail}"
+    return f"Gemini request failed with HTTP {status_code}."
+
+
 def _success_status() -> WearProviderResultStatus:
     enum_cls = WearProviderResultStatus
 
@@ -1224,3 +1544,8 @@ def _format_allowed_silhouettes() -> str:
 
 def _format_allowed_attributes() -> str:
     return ", ".join(_ALLOWED_ATTRIBUTES)
+
+
+def _format_allowed_values(field_name: str) -> str:
+    values = CONTROLLED_SCALAR_VALUES.get(field_name, frozenset())
+    return ", ".join(sorted(values))

@@ -118,6 +118,7 @@ class OutfitService:
         season: str | None,
         is_favorite: bool,
         items: list[dict[str, object]],
+        commit: bool = True,
     ) -> OutfitDetailSnapshot:
         normalized_items = self._normalize_requested_items(items)
         self._get_eligible_items_or_raise(
@@ -138,7 +139,10 @@ class OutfitService:
             outfit_id=outfit.id,
             items=[self._serialize_outfit_item(item) for item in normalized_items],
         )
-        self.session.commit()
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
         return self.get_outfit_detail(outfit_id=outfit.id, user_id=user_id)
 
     def list_outfits(
@@ -222,6 +226,7 @@ class OutfitService:
         is_favorite: bool | None = None,
         items: list[dict[str, object]] | None = None,
         field_names: set[str],
+        commit: bool = True,
     ) -> OutfitDetailSnapshot:
         outfit = self._get_outfit_or_raise(outfit_id=outfit_id, user_id=user_id)
 
@@ -251,14 +256,20 @@ class OutfitService:
                 items=[self._serialize_outfit_item(item) for item in normalized_items],
             )
 
-        self.session.commit()
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
         return self.get_outfit_detail(outfit_id=outfit.id, user_id=user_id)
 
-    def archive_outfit(self, *, outfit_id: UUID, user_id: UUID) -> None:
+    def archive_outfit(self, *, outfit_id: UUID, user_id: UUID, commit: bool = True) -> None:
         outfit = self._get_outfit_or_raise(outfit_id=outfit_id, user_id=user_id)
         if outfit.archived_at is None:
             outfit.archived_at = utcnow()
-            self.session.commit()
+            if commit:
+                self.session.commit()
+            else:
+                self.session.flush()
 
     def create_outfit_from_wear_log(
         self,
@@ -270,6 +281,7 @@ class OutfitService:
         occasion: str | None,
         season: str | None,
         is_favorite: bool,
+        commit: bool = True,
     ) -> OutfitDetailSnapshot:
         wear_log = self.repository.get_wear_log_for_user(wear_log_id=wear_log_id, user_id=user_id)
         if wear_log is None:
@@ -307,7 +319,10 @@ class OutfitService:
             outfit_id=outfit.id,
             items=[self._serialize_outfit_item(item) for item in normalized_items],
         )
-        self.session.commit()
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
         return self.get_outfit_detail(outfit_id=outfit.id, user_id=user_id)
 
     def _get_outfit_or_raise(self, *, outfit_id: UUID, user_id: UUID) -> Outfit:

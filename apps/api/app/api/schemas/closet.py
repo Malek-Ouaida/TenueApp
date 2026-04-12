@@ -17,6 +17,9 @@ class ClosetMetadataOptionsResponse(BaseModel):
     processing_statuses: list[str]
     review_statuses: list[str]
     categories: list[ClosetMetadataCategoryOption]
+    subcategory_by_category: dict[str, list[str]]
+    primary_colors: list[str]
+    secondary_colors: list[str]
     colors: list[str]
     materials: list[str]
     patterns: list[str]
@@ -26,6 +29,11 @@ class ClosetMetadataOptionsResponse(BaseModel):
     season_tags: list[str]
     silhouettes: list[str]
     attributes: list[str]
+    formality: list[str]
+    warmth: list[str]
+    coverage: list[str]
+    statement_level: list[str]
+    versatility: list[str]
 
 
 class ClosetDraftCreateRequest(BaseModel):
@@ -207,6 +215,11 @@ class ClosetMetadataProjectionSnapshot(BaseModel):
     season_tags: list[str] | None
     silhouette: str | None
     attributes: list[str] | None
+    formality: str | None
+    warmth: str | None
+    coverage: str | None
+    statement_level: str | None
+    versatility: str | None
     confirmed_at: datetime | None
     updated_at: datetime
 

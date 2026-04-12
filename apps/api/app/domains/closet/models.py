@@ -406,6 +406,11 @@ class ClosetItemMetadataProjection(Base):
     season_tags: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     silhouette: Mapped[str | None] = mapped_column(String(64), nullable=True)
     attributes: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    formality: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    warmth: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    coverage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    statement_level: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    versatility: Mapped[str | None] = mapped_column(String(64), nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

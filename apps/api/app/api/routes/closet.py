@@ -891,6 +891,11 @@ def _build_metadata_projection_payload(
         season_tags=getattr(projection, "season_tags"),
         silhouette=getattr(projection, "silhouette"),
         attributes=getattr(projection, "attributes"),
+        formality=getattr(projection, "formality"),
+        warmth=getattr(projection, "warmth"),
+        coverage=getattr(projection, "coverage"),
+        statement_level=getattr(projection, "statement_level"),
+        versatility=getattr(projection, "versatility"),
         confirmed_at=getattr(projection, "confirmed_at"),
         updated_at=getattr(projection, "updated_at"),
     )

@@ -32,50 +32,16 @@ from app.domains.closet.repository import ClosetRepository
 from app.domains.closet.service import ClosetLifecycleService
 from app.domains.closet.similarity_service import ClosetSimilarityService
 from app.domains.closet.taxonomy import (
-    ATTRIBUTES,
-    CATEGORY_SUBCATEGORIES,
-    COLORS,
-    FIT_TAGS,
-    MATERIALS,
-    OCCASION_TAGS,
-    PATTERNS,
+    CONTROLLED_LIST_VALUES,
+    CONTROLLED_SCALAR_VALUES,
+    FREE_TEXT_FIELDS,
+    LIST_FIELD_NAMES,
     REQUIRED_CONFIRMATION_FIELDS,
-    SEASON_TAGS,
-    SILHOUETTES,
-    STYLE_TAGS,
     SUPPORTED_FIELD_ORDER,
     TAXONOMY_VERSION,
 )
 
 logger = logging.getLogger(__name__)
-
-SCALAR_CONTROLLED_FIELDS = frozenset(
-    {"category", "subcategory", "material", "pattern", "silhouette"}
-)
-LIST_FIELDS = frozenset(
-    {"colors", "style_tags", "fit_tags", "occasion_tags", "season_tags", "attributes"}
-)
-CATEGORY_VALUES = frozenset(CATEGORY_SUBCATEGORIES.keys())
-SUBCATEGORY_VALUES = frozenset(
-    subcategory
-    for subcategories in CATEGORY_SUBCATEGORIES.values()
-    for subcategory in subcategories
-)
-CONTROLLED_LIST_VALUES = {
-    "colors": frozenset(COLORS),
-    "style_tags": frozenset(STYLE_TAGS),
-    "fit_tags": frozenset(FIT_TAGS),
-    "occasion_tags": frozenset(OCCASION_TAGS),
-    "season_tags": frozenset(SEASON_TAGS),
-    "attributes": frozenset(ATTRIBUTES),
-}
-CONTROLLED_SCALAR_VALUES = {
-    "category": CATEGORY_VALUES,
-    "subcategory": SUBCATEGORY_VALUES,
-    "material": frozenset(MATERIALS),
-    "pattern": frozenset(PATTERNS),
-    "silhouette": frozenset(SILHOUETTES),
-}
 
 
 @dataclass(frozen=True)
@@ -361,7 +327,7 @@ class ConfirmedClosetItemService:
         return planned_mutations
 
     def _validate_manual_value(self, *, field_name: str, canonical_value: Any) -> Any:
-        if field_name in {"title", "brand"}:
+        if field_name in FREE_TEXT_FIELDS:
             if not isinstance(canonical_value, str):
                 raise build_error(
                     INVALID_REVIEW_MUTATION,
@@ -380,7 +346,7 @@ class ConfirmedClosetItemService:
                 )
             return normalized
 
-        if field_name in SCALAR_CONTROLLED_FIELDS:
+        if field_name in CONTROLLED_SCALAR_VALUES:
             if not isinstance(canonical_value, str):
                 raise build_error(
                     INVALID_REVIEW_MUTATION,
@@ -395,7 +361,7 @@ class ConfirmedClosetItemService:
                 )
             return normalized
 
-        if field_name in LIST_FIELDS:
+        if field_name in LIST_FIELD_NAMES:
             raw_values: list[str]
             if isinstance(canonical_value, str):
                 raw_values = [collapse_whitespace(canonical_value)]

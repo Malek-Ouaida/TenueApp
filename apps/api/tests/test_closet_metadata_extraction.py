@@ -31,7 +31,7 @@ from app.domains.closet.models import (
     ProviderResultStatus,
 )
 from app.domains.closet.repository import ClosetRepository
-from app.domains.closet.taxonomy import TAXONOMY_VERSION
+from app.domains.closet.taxonomy import SUPPORTED_FIELD_ORDER, TAXONOMY_VERSION
 from app.domains.closet.worker import ClosetWorker
 from app.domains.closet.worker_runner import build_worker_handlers
 
@@ -578,9 +578,11 @@ def test_metadata_extraction_worker_persists_candidates_and_keeps_trust_layer_un
     assert [candidate.field_name for candidate in field_candidates] == [
         "category",
         "subcategory",
-        "colors",
+        "primary_color",
+        "secondary_colors",
     ]
-    assert field_candidates[2].raw_value == ["black", "white"]
+    assert field_candidates[2].raw_value == "black"
+    assert field_candidates[3].raw_value == ["white"]
     assert field_states == []
     assert projection.category is None
     assert projection.subcategory is None
@@ -775,41 +777,29 @@ def test_normalization_materializes_field_states_and_keeps_projection_confirmed_
     assert [candidate.field_name for candidate in field_candidates] == [
         "category",
         "subcategory",
-        "colors",
+        "primary_color",
+        "secondary_colors",
         "style_tags",
         "occasion_tags",
         "brand",
     ]
     assert field_candidates[0].normalized_candidate == "tops"
-    assert field_candidates[1].normalized_candidate == "t-shirt"
-    assert field_candidates[2].normalized_candidate == ["gray", "navy"]
-    assert "taupe" in (field_candidates[2].conflict_notes or "")
-    assert field_candidates[3].normalized_candidate == ["sporty"]
-    assert "smart casual" in (field_candidates[3].conflict_notes or "")
-    assert field_candidates[4].normalized_candidate == ["business", "vacation"]
-    assert field_candidates[4].conflict_notes in {None, ""}
-    assert field_candidates[5].normalized_candidate == "COS"
+    assert field_candidates[1].normalized_candidate == "t_shirt"
+    assert field_candidates[2].normalized_candidate == "gray"
+    assert field_candidates[3].normalized_candidate == ["navy", "taupe"]
+    assert field_candidates[4].normalized_candidate == ["sporty"]
+    assert "smart casual" in (field_candidates[4].conflict_notes or "")
+    assert field_candidates[5].normalized_candidate == ["work", "vacation"]
+    assert field_candidates[5].conflict_notes in {None, ""}
+    assert field_candidates[6].normalized_candidate == "COS"
 
-    assert set(state_by_field) == {
-        "title",
-        "category",
-        "subcategory",
-        "colors",
-        "material",
-        "pattern",
-        "brand",
-        "style_tags",
-        "fit_tags",
-        "occasion_tags",
-        "season_tags",
-        "silhouette",
-        "attributes",
-    }
+    assert set(state_by_field) == set(SUPPORTED_FIELD_ORDER)
     assert state_by_field["category"].source == FieldSource.PROVIDER
     assert state_by_field["category"].review_state == FieldReviewState.PENDING_USER
     assert state_by_field["category"].canonical_value == "tops"
-    assert state_by_field["subcategory"].canonical_value == "t-shirt"
-    assert state_by_field["colors"].canonical_value == ["gray", "navy"]
+    assert state_by_field["subcategory"].canonical_value == "t_shirt"
+    assert state_by_field["primary_color"].canonical_value == "gray"
+    assert state_by_field["secondary_colors"].canonical_value == ["navy", "taupe"]
     assert state_by_field["material"].source == FieldSource.SYSTEM
     assert state_by_field["material"].review_state == FieldReviewState.SYSTEM_UNSET
     assert state_by_field["material"].applicability_state == ApplicabilityState.UNKNOWN
@@ -826,24 +816,13 @@ def test_normalization_materializes_field_states_and_keeps_projection_confirmed_
     assert body["normalization_status"] == "completed_with_issues"
     assert body["field_states_stale"] is False
     assert body["latest_normalization_run"]["status"] == "completed_with_issues"
-    assert [field_state["field_name"] for field_state in body["current_field_states"]] == [
-        "title",
-        "category",
-        "subcategory",
-        "colors",
-        "material",
-        "pattern",
-        "brand",
-        "style_tags",
-        "fit_tags",
-        "occasion_tags",
-        "season_tags",
-        "silhouette",
-        "attributes",
-    ]
+    assert [field_state["field_name"] for field_state in body["current_field_states"]] == list(
+        SUPPORTED_FIELD_ORDER
+    )
     assert body["current_field_states"][1]["canonical_value"] == "tops"
-    assert body["current_field_states"][2]["canonical_value"] == "t-shirt"
-    assert body["current_field_states"][3]["canonical_value"] == ["gray", "navy"]
+    assert body["current_field_states"][2]["canonical_value"] == "t_shirt"
+    assert body["current_field_states"][3]["canonical_value"] == "gray"
+    assert body["current_field_states"][4]["canonical_value"] == ["navy", "taupe"]
     assert body["review_status"] == "needs_review"
     assert body["metadata_projection"]["category"] is None
 
@@ -915,7 +894,7 @@ def test_normalization_derives_category_and_preserves_unknown_states(
     assert state_by_field["category"].source == FieldSource.PROVIDER
     assert state_by_field["category"].canonical_value == "tops"
     assert state_by_field["category"].confidence == 0.88
-    assert state_by_field["subcategory"].canonical_value == "t-shirt"
+    assert state_by_field["subcategory"].canonical_value == "t_shirt"
     assert state_by_field["material"].source == FieldSource.PROVIDER
     assert state_by_field["material"].applicability_state == ApplicabilityState.NOT_APPLICABLE
     assert state_by_field["material"].canonical_value is None
@@ -929,8 +908,8 @@ def test_normalization_derives_category_and_preserves_unknown_states(
     assert body["normalization_status"] == "completed_with_issues"
     assert body["field_states_stale"] is False
     assert body["current_field_states"][1]["canonical_value"] == "tops"
-    assert body["current_field_states"][4]["applicability_state"] == "not_applicable"
-    assert body["current_field_states"][5]["applicability_state"] == "unknown"
+    assert body["current_field_states"][5]["applicability_state"] == "not_applicable"
+    assert body["current_field_states"][6]["applicability_state"] == "unknown"
 
 
 def test_normalization_preserves_existing_user_field_states(
@@ -1124,7 +1103,7 @@ def test_failed_normalization_preserves_previous_field_states_and_marks_snapshot
     assert latest_normalization_run.status == ProcessingStatus.FAILED
     preserved_field_states = field_state_map(db_session, item_id=item_id)
     assert preserved_field_states["category"].canonical_value == "tops"
-    assert preserved_field_states["subcategory"].canonical_value == "t-shirt"
+    assert preserved_field_states["subcategory"].canonical_value == "t_shirt"
 
     response = client.get(f"/closet/items/{item_id}/extraction", headers=headers)
     assert response.status_code == 200
@@ -1132,7 +1111,7 @@ def test_failed_normalization_preserves_previous_field_states_and_marks_snapshot
     assert body["normalization_status"] == "failed"
     assert body["field_states_stale"] is True
     assert body["current_field_states"][1]["canonical_value"] == "tops"
-    assert body["current_field_states"][2]["canonical_value"] == "t-shirt"
+    assert body["current_field_states"][2]["canonical_value"] == "t_shirt"
 
 
 def test_reextract_is_idempotent_and_duplicate_schedule_is_rejected(

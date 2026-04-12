@@ -363,7 +363,11 @@ class ClosetBrowseService:
     ) -> list[ClosetItemFieldState]:
         order_map = {field_name: index for index, field_name in enumerate(SUPPORTED_FIELD_ORDER)}
         return sorted(
-            field_states,
+            [
+                field_state
+                for field_state in field_states
+                if field_state.field_name in order_map
+            ],
             key=lambda field_state: (
                 order_map.get(field_state.field_name, len(order_map)),
                 field_state.field_name,

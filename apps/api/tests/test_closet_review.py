@@ -364,13 +364,15 @@ def test_review_snapshot_merges_current_and_suggested_state_in_stable_order(
 
     assert [field["field_name"] for field in body["review_fields"]] == list(SUPPORTED_FIELD_ORDER)
     category_field = review_field(body, "category")
-    colors_field = review_field(body, "colors")
+    primary_color_field = review_field(body, "primary_color")
+    secondary_colors_field = review_field(body, "secondary_colors")
     brand_field = review_field(body, "brand")
 
     assert category_field["current_state"]["review_state"] == "pending_user"
     assert category_field["suggested_state"]["canonical_value"] == "tops"
     assert category_field["suggested_state"]["is_derived"] is False
-    assert colors_field["suggested_state"]["canonical_value"] == ["gray", "navy"]
+    assert primary_color_field["suggested_state"]["canonical_value"] == "gray"
+    assert secondary_colors_field["suggested_state"]["canonical_value"] == ["navy"]
     assert brand_field["suggested_state"]["canonical_value"] == "Other Brand"
     assert body["current_candidate_set"]["provider_result_id"] is not None
 
@@ -792,7 +794,7 @@ def test_confirm_requires_user_truth_and_keeps_optional_provider_values_out_of_p
     projection = ClosetRepository(db_session).get_metadata_projection(item_id=item_id)
     assert projection is not None
     assert projection.category == "tops"
-    assert projection.subcategory == "t-shirt"
+    assert projection.subcategory == "t_shirt"
     assert projection.brand is None
 
 

@@ -80,6 +80,11 @@ class NormalizationMetadataProjectionSnapshot:
     season_tags: list[str] | None
     silhouette: str | None
     attributes: list[str] | None
+    formality: str | None
+    warmth: str | None
+    coverage: str | None
+    statement_level: str | None
+    versatility: str | None
     confirmed_at: Any
     updated_at: Any
 
@@ -212,6 +217,11 @@ class ClosetNormalizationService:
                 season_tags=projection.season_tags,
                 silhouette=projection.silhouette,
                 attributes=projection.attributes,
+                formality=projection.formality,
+                warmth=projection.warmth,
+                coverage=projection.coverage,
+                statement_level=projection.statement_level,
+                versatility=projection.versatility,
                 confirmed_at=projection.confirmed_at,
                 updated_at=projection.updated_at,
             ),
@@ -273,15 +283,16 @@ class ClosetNormalizationService:
 
         try:
             with self.session.begin_nested():
-                normalized_values = {
-                    candidate.field_name: normalize_field_value(
-                        field_name=candidate.field_name,
-                        raw_value=candidate.raw_value,
-                        applicability_state=candidate.applicability_state,
-                        confidence=candidate.confidence,
-                    )
-                    for candidate in candidates
-                }
+                normalized_values: dict[str, NormalizedFieldValue] = {}
+                for candidate in candidates:
+                    expanded = self._expand_candidate_aliases(candidate)
+                    for field_name, raw_value, applicability_state in expanded:
+                        normalized_values[field_name] = normalize_field_value(
+                            field_name=field_name,
+                            raw_value=raw_value,
+                            applicability_state=applicability_state,
+                            confidence=candidate.confidence,
+                        )
                 normalized_values = self._reconcile_taxonomy(normalized_values)
                 issue_notes = self._update_candidates(
                     candidates=candidates,
@@ -409,6 +420,27 @@ class ClosetNormalizationService:
         )
         return normalized_values
 
+    def _expand_candidate_aliases(
+        self,
+        candidate: ClosetItemFieldCandidate,
+    ) -> list[tuple[str, Any, ApplicabilityState]]:
+        if candidate.field_name != "colors":
+            return [(candidate.field_name, candidate.raw_value, candidate.applicability_state)]
+
+        if candidate.applicability_state != ApplicabilityState.VALUE:
+            return [
+                ("primary_color", None, candidate.applicability_state),
+                ("secondary_colors", None, candidate.applicability_state),
+            ]
+
+        raw_values = candidate.raw_value if isinstance(candidate.raw_value, list) else []
+        expanded: list[tuple[str, Any, ApplicabilityState]] = []
+        if raw_values:
+            expanded.append(("primary_color", raw_values[0], ApplicabilityState.VALUE))
+        if len(raw_values) > 1:
+            expanded.append(("secondary_colors", raw_values[1:], ApplicabilityState.VALUE))
+        return expanded
+
     def _update_candidates(
         self,
         *,
@@ -417,6 +449,30 @@ class ClosetNormalizationService:
     ) -> list[str]:
         for candidate in candidates:
             normalized_value = normalized_values.get(candidate.field_name)
+            if candidate.field_name == "colors" and normalized_value is None:
+                primary_color = normalized_values.get("primary_color")
+                secondary_colors = normalized_values.get("secondary_colors")
+                combined_colors: list[str] = []
+                if (
+                    primary_color is not None
+                    and primary_color.applicability_state == ApplicabilityState.VALUE
+                    and isinstance(primary_color.canonical_value, str)
+                ):
+                    combined_colors.append(primary_color.canonical_value)
+                if (
+                    secondary_colors is not None
+                    and secondary_colors.applicability_state == ApplicabilityState.VALUE
+                    and isinstance(secondary_colors.canonical_value, list)
+                ):
+                    combined_colors.extend(secondary_colors.canonical_value)
+                candidate.normalized_candidate = combined_colors or None
+                conflict_notes: list[str] = []
+                if primary_color is not None:
+                    conflict_notes.extend(primary_color.notes)
+                if secondary_colors is not None:
+                    conflict_notes.extend(secondary_colors.notes)
+                candidate.conflict_notes = _merge_notes(candidate.conflict_notes, tuple(conflict_notes))
+                continue
             if normalized_value is None:
                 continue
 
@@ -545,7 +601,11 @@ class ClosetNormalizationService:
     def _ordered_field_states(self, *, item: ClosetItem) -> list[ClosetItemFieldState]:
         order_map = {field_name: index for index, field_name in enumerate(SUPPORTED_FIELD_ORDER)}
         return sorted(
-            self.repository.list_field_states(closet_item_id=item.id),
+            [
+                field_state
+                for field_state in self.repository.list_field_states(closet_item_id=item.id)
+                if field_state.field_name in order_map
+            ],
             key=lambda field_state: (
                 order_map.get(field_state.field_name, len(order_map)),
                 field_state.field_name,

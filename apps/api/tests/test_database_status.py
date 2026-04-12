@@ -20,7 +20,7 @@ if not any(route.path == "/_tests/database-schema-error" for route in app.router
 
 
 def test_expected_database_revisions_resolve_current_head() -> None:
-    assert get_expected_database_revisions() == ("ba43d78d42fb",)
+    assert get_expected_database_revisions() == ("0018_lookbook_hardening_constraints",)
 
 
 def test_database_schema_status_skips_sqlite_test_sessions(db_session) -> None:
@@ -28,7 +28,7 @@ def test_database_schema_status_skips_sqlite_test_sessions(db_session) -> None:
 
     assert status.status == "skipped"
     assert status.current_revisions == ()
-    assert status.expected_revisions == ("ba43d78d42fb",)
+    assert status.expected_revisions == ("0018_lookbook_hardening_constraints",)
 
 
 def test_classify_database_failure_reports_schema_drift() -> None:
@@ -43,7 +43,7 @@ def test_classify_database_failure_reports_schema_drift() -> None:
     assert failure is not None
     assert failure.code == "database_schema_out_of_date"
     assert failure.status_code == 503
-    assert failure.expected_revisions == ("ba43d78d42fb",)
+    assert failure.expected_revisions == ("0018_lookbook_hardening_constraints",)
     assert "alembic upgrade head" in failure.message
     assert "Resolved API database target:" in failure.message
 
