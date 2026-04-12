@@ -3,28 +3,38 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.domains.closet.models import (
-    ClosetItemImage,
-    ClosetItemImageRole,
-    MediaAsset,
-    MediaAssetSourceKind,
-)
+from app.domains.closet.models import MediaAsset, MediaAssetSourceKind
 from app.domains.lookbook.models import (
     Lookbook,
     LookbookEntry,
+    LookbookEntryIntent,
+    LookbookEntrySourceKind,
+    LookbookEntryStatus,
     LookbookEntryType,
     LookbookUploadIntent,
     LookbookUploadIntentStatus,
 )
-from app.domains.wear.models import Outfit, OutfitItem
 
 
 class LookbookRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def get_default_lookbook_for_user(self, *, user_id: UUID) -> Lookbook | None:
+        statement = (
+            select(Lookbook)
+            .where(
+                Lookbook.user_id == user_id,
+                Lookbook.is_default.is_(True),
+            )
+            .order_by(Lookbook.updated_at.desc(), Lookbook.id.desc())
+            .limit(1)
+        )
+        return self.session.execute(statement).scalar_one_or_none()
 
     def create_lookbook(
         self,
@@ -32,164 +42,193 @@ class LookbookRepository:
         user_id: UUID,
         title: str,
         description: str | None,
+        is_default: bool,
     ) -> Lookbook:
-        lookbook = Lookbook(user_id=user_id, title=title, description=description)
+        lookbook = Lookbook(
+            user_id=user_id,
+            title=title,
+            description=description,
+            is_default=is_default,
+        )
         self.session.add(lookbook)
         self.session.flush()
         return lookbook
 
-    def get_lookbook_for_user(self, *, lookbook_id: UUID, user_id: UUID) -> Lookbook | None:
-        statement = select(Lookbook).where(
-            Lookbook.id == lookbook_id,
-            Lookbook.user_id == user_id,
-        )
-        return self.session.execute(statement).scalar_one_or_none()
-
-    def list_lookbooks(
+    def get_or_create_default_lookbook(
         self,
         *,
         user_id: UUID,
-        offset: int,
-        limit: int,
-    ) -> list[Lookbook]:
-        statement = (
-            select(Lookbook)
-            .where(Lookbook.user_id == user_id)
-            .order_by(Lookbook.updated_at.desc(), Lookbook.id.desc())
-            .offset(offset)
-            .limit(limit)
-        )
-        return list(self.session.execute(statement).scalars())
+        title: str,
+        description: str | None,
+    ) -> Lookbook:
+        lookbook = self.get_default_lookbook_for_user(user_id=user_id)
+        if lookbook is not None:
+            return lookbook
 
-    def delete_lookbook(self, *, lookbook: Lookbook) -> None:
-        self.session.execute(
-            delete(LookbookUploadIntent).where(LookbookUploadIntent.lookbook_id == lookbook.id)
-        )
-        self.session.execute(delete(LookbookEntry).where(LookbookEntry.lookbook_id == lookbook.id))
-        self.session.delete(lookbook)
-        self.session.flush()
+        try:
+            return self.create_lookbook(
+                user_id=user_id,
+                title=title,
+                description=description,
+                is_default=True,
+            )
+        except IntegrityError:
+            self.session.rollback()
+            lookbook = self.get_default_lookbook_for_user(user_id=user_id)
+            if lookbook is not None:
+                return lookbook
+            raise
 
     def create_entry(
         self,
         *,
         lookbook_id: UUID,
-        entry_type: LookbookEntryType,
-        outfit_id: UUID | None,
-        image_asset_id: UUID | None,
+        source_kind: LookbookEntrySourceKind,
+        intent: LookbookEntryIntent,
+        status: LookbookEntryStatus,
+        title: str | None,
         caption: str | None,
-        note_text: str | None,
-        sort_index: int,
+        notes: str | None,
+        occasion_tag: str | None,
+        season_tag: str | None,
+        style_tag: str | None,
+        primary_image_asset_id: UUID,
+        source_wear_log_id: UUID | None,
+        owned_outfit_id: UUID | None,
+        source_snapshot_json: dict[str, object] | None,
+        published_at: datetime | None,
     ) -> LookbookEntry:
         entry = LookbookEntry(
             lookbook_id=lookbook_id,
-            entry_type=entry_type,
-            outfit_id=outfit_id,
-            image_asset_id=image_asset_id,
+            entry_type=LookbookEntryType.IMAGE,
+            outfit_id=None,
+            image_asset_id=primary_image_asset_id,
             caption=caption,
-            note_text=note_text,
-            sort_index=sort_index,
+            note_text=None,
+            sort_index=0,
+            source_kind=source_kind,
+            intent=intent,
+            status=status,
+            title=title,
+            notes=notes,
+            occasion_tag=occasion_tag,
+            season_tag=season_tag,
+            style_tag=style_tag,
+            source_wear_log_id=source_wear_log_id,
+            owned_outfit_id=owned_outfit_id,
+            source_snapshot_json=source_snapshot_json,
+            published_at=published_at,
+            archived_at=None,
         )
         self.session.add(entry)
         self.session.flush()
         return entry
 
-    def get_entry_for_lookbook(
-        self,
-        *,
-        lookbook_id: UUID,
-        entry_id: UUID,
-    ) -> LookbookEntry | None:
-        statement = select(LookbookEntry).where(
-            LookbookEntry.lookbook_id == lookbook_id,
-            LookbookEntry.id == entry_id,
-        )
-        return self.session.execute(statement).scalar_one_or_none()
-
-    def get_entry_for_user(
-        self,
-        *,
-        entry_id: UUID,
-        user_id: UUID,
-    ) -> tuple[Lookbook, LookbookEntry] | None:
-        statement = (
-            select(Lookbook, LookbookEntry)
-            .join(LookbookEntry, LookbookEntry.lookbook_id == Lookbook.id)
-            .where(
-                LookbookEntry.id == entry_id,
-                Lookbook.user_id == user_id,
-            )
-        )
-        return self.session.execute(statement).one_or_none()
-
-    def list_entries_for_lookbook(
-        self,
-        *,
-        lookbook_id: UUID,
-        offset: int,
-        limit: int,
-    ) -> list[LookbookEntry]:
-        statement = (
-            select(LookbookEntry)
-            .where(LookbookEntry.lookbook_id == lookbook_id)
-            .order_by(LookbookEntry.sort_index.asc(), LookbookEntry.id.asc())
-            .offset(offset)
-            .limit(limit)
-        )
-        return list(self.session.execute(statement).scalars())
-
     def list_entries_for_user(
         self,
         *,
         user_id: UUID,
-        offset: int,
+        cursor_updated_at: datetime | None,
+        cursor_created_at: datetime | None,
+        cursor_entry_id: UUID | None,
         limit: int,
-    ) -> list[tuple[Lookbook, LookbookEntry]]:
-        statement = (
-            select(Lookbook, LookbookEntry)
-            .join(LookbookEntry, LookbookEntry.lookbook_id == Lookbook.id)
-            .where(Lookbook.user_id == user_id)
-            .order_by(LookbookEntry.updated_at.desc(), LookbookEntry.id.desc())
-            .offset(offset)
-            .limit(limit)
-        )
-        return list(self.session.execute(statement).all())
+        status: LookbookEntryStatus | None,
+        source_kind: LookbookEntrySourceKind | None,
+        intent: LookbookEntryIntent | None,
+        occasion_tag: str | None,
+        season_tag: str | None,
+        style_tag: str | None,
+        has_linked_items: bool | None,
+        include_archived: bool,
+    ) -> list[LookbookEntry]:
+        default_lookbook = self.get_default_lookbook_for_user(user_id=user_id)
+        if default_lookbook is None:
+            return []
 
-    def list_all_entries_for_lookbook(self, *, lookbook_id: UUID) -> list[LookbookEntry]:
+        statement = select(LookbookEntry).where(LookbookEntry.lookbook_id == default_lookbook.id)
+
+        if not include_archived:
+            statement = statement.where(LookbookEntry.archived_at.is_(None))
+        if status is not None:
+            statement = statement.where(LookbookEntry.status == status)
+        if source_kind is not None:
+            statement = statement.where(LookbookEntry.source_kind == source_kind)
+        if intent is not None:
+            statement = statement.where(LookbookEntry.intent == intent)
+        if occasion_tag is not None:
+            statement = statement.where(LookbookEntry.occasion_tag == occasion_tag)
+        if season_tag is not None:
+            statement = statement.where(LookbookEntry.season_tag == season_tag)
+        if style_tag is not None:
+            statement = statement.where(LookbookEntry.style_tag == style_tag)
+        if has_linked_items is not None:
+            if has_linked_items:
+                statement = statement.where(LookbookEntry.owned_outfit_id.is_not(None))
+            else:
+                statement = statement.where(LookbookEntry.owned_outfit_id.is_(None))
+        if (
+            cursor_updated_at is not None
+            and cursor_created_at is not None
+            and cursor_entry_id is not None
+        ):
+            statement = statement.where(
+                or_(
+                    LookbookEntry.updated_at < cursor_updated_at,
+                    and_(
+                        LookbookEntry.updated_at == cursor_updated_at,
+                        LookbookEntry.created_at < cursor_created_at,
+                    ),
+                    and_(
+                        LookbookEntry.updated_at == cursor_updated_at,
+                        LookbookEntry.created_at == cursor_created_at,
+                        LookbookEntry.id < cursor_entry_id,
+                    ),
+                )
+            )
+
         statement = (
-            select(LookbookEntry)
-            .where(LookbookEntry.lookbook_id == lookbook_id)
-            .order_by(LookbookEntry.sort_index.asc(), LookbookEntry.id.asc())
+            statement.order_by(
+                LookbookEntry.updated_at.desc(),
+                LookbookEntry.created_at.desc(),
+                LookbookEntry.id.desc(),
+            )
+            .limit(limit)
         )
         return list(self.session.execute(statement).scalars())
 
-    def list_entries_for_lookbooks(
-        self,
-        *,
-        lookbook_ids: list[UUID],
-    ) -> dict[UUID, list[LookbookEntry]]:
-        if not lookbook_ids:
-            return {}
-
+    def get_entry_for_user(self, *, entry_id: UUID, user_id: UUID) -> LookbookEntry | None:
         statement = (
             select(LookbookEntry)
-            .where(LookbookEntry.lookbook_id.in_(lookbook_ids))
-            .order_by(
-                LookbookEntry.lookbook_id.asc(),
-                LookbookEntry.sort_index.asc(),
-                LookbookEntry.id.asc(),
+            .join(Lookbook, Lookbook.id == LookbookEntry.lookbook_id)
+            .where(
+                LookbookEntry.id == entry_id,
+                Lookbook.user_id == user_id,
+                Lookbook.is_default.is_(True),
             )
         )
-        entries_by_lookbook: dict[UUID, list[LookbookEntry]] = {}
-        for entry in self.session.execute(statement).scalars():
-            entries_by_lookbook.setdefault(entry.lookbook_id, []).append(entry)
-        return entries_by_lookbook
+        return self.session.execute(statement).scalar_one_or_none()
 
-    def get_next_entry_sort_index(self, *, lookbook_id: UUID) -> int:
-        statement = select(func.max(LookbookEntry.sort_index)).where(
-            LookbookEntry.lookbook_id == lookbook_id
+    def get_entry_for_wear_log(
+        self,
+        *,
+        source_wear_log_id: UUID,
+        user_id: UUID,
+        include_archived: bool,
+    ) -> LookbookEntry | None:
+        statement = (
+            select(LookbookEntry)
+            .join(Lookbook, Lookbook.id == LookbookEntry.lookbook_id)
+            .where(
+                Lookbook.user_id == user_id,
+                Lookbook.is_default.is_(True),
+                LookbookEntry.source_wear_log_id == source_wear_log_id,
+            )
+            .order_by(LookbookEntry.updated_at.desc(), LookbookEntry.id.desc())
+            .limit(1)
         )
-        current_max = self.session.execute(statement).scalar_one()
-        return int(current_max) + 1 if current_max is not None else 0
+        if not include_archived:
+            statement = statement.where(LookbookEntry.archived_at.is_(None))
+        return self.session.execute(statement).scalar_one_or_none()
 
     def delete_entry(self, *, entry: LookbookEntry) -> None:
         self.session.delete(entry)
@@ -275,6 +314,20 @@ class LookbookRepository:
         self.session.flush()
         return upload_intent
 
+    def clear_expired_upload_intents(self, *, user_id: UUID) -> None:
+        self.session.execute(
+            delete(LookbookUploadIntent).where(
+                LookbookUploadIntent.user_id == user_id,
+                LookbookUploadIntent.status.in_(
+                    (
+                        LookbookUploadIntentStatus.EXPIRED,
+                        LookbookUploadIntentStatus.FAILED,
+                    )
+                ),
+            )
+        )
+        self.session.flush()
+
     def create_media_asset(
         self,
         *,
@@ -309,78 +362,14 @@ class LookbookRepository:
 
     def get_media_asset_for_user(self, *, asset_id: UUID, user_id: UUID) -> MediaAsset | None:
         statement = select(MediaAsset).where(
-            MediaAsset.id == asset_id, MediaAsset.user_id == user_id
+            MediaAsset.id == asset_id,
+            MediaAsset.user_id == user_id,
         )
         return self.session.execute(statement).scalar_one_or_none()
 
     def get_media_assets_by_ids(self, *, asset_ids: list[UUID]) -> dict[UUID, MediaAsset]:
         if not asset_ids:
             return {}
+
         statement = select(MediaAsset).where(MediaAsset.id.in_(asset_ids))
         return {asset.id: asset for asset in self.session.execute(statement).scalars()}
-
-    def get_outfit_for_user(self, *, outfit_id: UUID, user_id: UUID) -> Outfit | None:
-        statement = select(Outfit).where(Outfit.id == outfit_id, Outfit.user_id == user_id)
-        return self.session.execute(statement).scalar_one_or_none()
-
-    def get_outfits_for_user(
-        self,
-        *,
-        outfit_ids: list[UUID],
-        user_id: UUID,
-    ) -> dict[UUID, Outfit]:
-        if not outfit_ids:
-            return {}
-        statement = select(Outfit).where(Outfit.user_id == user_id, Outfit.id.in_(outfit_ids))
-        return {outfit.id: outfit for outfit in self.session.execute(statement).scalars()}
-
-    def list_outfit_items_for_outfits(
-        self,
-        *,
-        outfit_ids: list[UUID],
-    ) -> dict[UUID, list[OutfitItem]]:
-        if not outfit_ids:
-            return {}
-        statement = (
-            select(OutfitItem)
-            .where(OutfitItem.outfit_id.in_(outfit_ids))
-            .order_by(OutfitItem.outfit_id.asc(), OutfitItem.sort_index.asc(), OutfitItem.id.asc())
-        )
-        items_by_outfit: dict[UUID, list[OutfitItem]] = {}
-        for item in self.session.execute(statement).scalars():
-            items_by_outfit.setdefault(item.outfit_id, []).append(item)
-        return items_by_outfit
-
-    def list_active_image_assets_for_items(
-        self,
-        *,
-        closet_item_ids: list[UUID],
-        roles: list[ClosetItemImageRole],
-    ) -> dict[UUID, dict[ClosetItemImageRole, tuple[ClosetItemImage, MediaAsset]]]:
-        if not closet_item_ids or not roles:
-            return {}
-
-        statement = (
-            select(ClosetItemImage, MediaAsset)
-            .join(MediaAsset, MediaAsset.id == ClosetItemImage.asset_id)
-            .where(
-                ClosetItemImage.closet_item_id.in_(closet_item_ids),
-                ClosetItemImage.role.in_(roles),
-                ClosetItemImage.is_active.is_(True),
-            )
-            .order_by(
-                ClosetItemImage.closet_item_id.asc(),
-                ClosetItemImage.role.asc(),
-                ClosetItemImage.position.asc(),
-                ClosetItemImage.created_at.desc(),
-                ClosetItemImage.id.desc(),
-            )
-        )
-        images_by_item: dict[
-            UUID, dict[ClosetItemImageRole, tuple[ClosetItemImage, MediaAsset]]
-        ] = {}
-        for item_image, asset in self.session.execute(statement).all():
-            item_images = images_by_item.setdefault(item_image.closet_item_id, {})
-            if item_image.role not in item_images:
-                item_images[item_image.role] = (item_image, asset)
-        return images_by_item
