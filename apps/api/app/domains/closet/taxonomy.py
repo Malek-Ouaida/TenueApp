@@ -4,13 +4,14 @@ import re
 
 from app.domains.closet.models import LifecycleStatus, ProcessingStatus, ReviewStatus
 
-TAXONOMY_VERSION = "closet-taxonomy-v2"
+TAXONOMY_VERSION = "closet-taxonomy-v3"
 REQUIRED_CONFIRMATION_FIELDS = ("category", "subcategory")
 SUPPORTED_FIELD_ORDER = (
     "title",
     "category",
     "subcategory",
-    "colors",
+    "primary_color",
+    "secondary_colors",
     "material",
     "pattern",
     "brand",
@@ -20,21 +21,56 @@ SUPPORTED_FIELD_ORDER = (
     "season_tags",
     "silhouette",
     "attributes",
+    "formality",
+    "warmth",
+    "coverage",
+    "statement_level",
+    "versatility",
 )
 SUPPORTED_FIELD_NAMES = frozenset(SUPPORTED_FIELD_ORDER)
+SUPPORTED_INPUT_FIELD_NAMES = SUPPORTED_FIELD_NAMES | {"colors"}
+FREE_TEXT_FIELDS = frozenset({"title", "brand"})
+SCALAR_CONTROLLED_FIELDS = frozenset(
+    {
+        "category",
+        "subcategory",
+        "primary_color",
+        "material",
+        "pattern",
+        "silhouette",
+        "formality",
+        "warmth",
+        "coverage",
+        "statement_level",
+        "versatility",
+    }
+)
+LIST_FIELD_NAMES = frozenset(
+    {
+        "secondary_colors",
+        "style_tags",
+        "fit_tags",
+        "occasion_tags",
+        "season_tags",
+        "attributes",
+    }
+)
 
 CATEGORY_SUBCATEGORIES = {
     "tops": [
-        "t-shirt",
+        "t_shirt",
         "shirt",
         "blouse",
-        "tank top",
+        "tank_top",
         "camisole",
         "polo",
         "sweater",
         "sweatshirt",
         "hoodie",
         "bodysuit",
+        "knit_top",
+        "tunic",
+        "vest_top",
     ],
     "bottoms": [
         "jeans",
@@ -43,42 +79,62 @@ CATEGORY_SUBCATEGORIES = {
         "skirt",
         "leggings",
         "joggers",
+        "cargo_pants",
     ],
     "dresses": [
-        "mini dress",
-        "midi dress",
-        "maxi dress",
-        "slip dress",
-        "shirt dress",
-        "sweater dress",
+        "shirt_dress",
+        "sweater_dress",
+        "bodycon_dress",
+        "wrap_dress",
+        "strapless_dress",
+        "evening_dress",
     ],
     "outerwear": [
         "blazer",
         "jacket",
         "coat",
-        "trench coat",
+        "trench_coat",
         "cardigan",
         "vest",
+        "denim_jacket",
+        "leather_jacket",
+        "puffer_jacket",
+        "bomber_jacket",
+        "shacket",
+        "rain_jacket",
     ],
     "one_piece": [
         "jumpsuit",
         "romper",
+        "catsuit",
+        "overalls",
     ],
     "shoes": [
         "sneakers",
         "boots",
+        "ankle_boots",
+        "knee_high_boots",
         "heels",
+        "pumps",
         "flats",
+        "ballet_flats",
         "loafers",
         "sandals",
         "mules",
+        "slippers",
+        "clogs",
     ],
     "bags": [
         "tote",
-        "shoulder bag",
+        "shoulder_bag",
         "crossbody",
         "backpack",
         "clutch",
+        "mini_bag",
+        "top_handle_bag",
+        "hobo_bag",
+        "satchel",
+        "evening_bag",
     ],
     "jewelry": [
         "necklace",
@@ -86,6 +142,8 @@ CATEGORY_SUBCATEGORIES = {
         "bracelet",
         "ring",
         "watch",
+        "anklet",
+        "brooch",
     ],
     "accessories": [
         "belt",
@@ -93,7 +151,11 @@ CATEGORY_SUBCATEGORIES = {
         "scarf",
         "sunglasses",
         "wallet",
-        "jewelry",
+        "gloves",
+        "hair_accessory",
+        "tie",
+        "socks",
+        "tights",
     ],
 }
 
@@ -101,19 +163,31 @@ COLORS = [
     "black",
     "white",
     "gray",
+    "charcoal",
     "beige",
     "cream",
+    "taupe",
     "brown",
+    "camel",
     "blue",
     "navy",
+    "light_blue",
+    "denim_blue",
     "green",
+    "olive",
+    "sage",
     "red",
+    "burgundy",
     "pink",
+    "blush",
     "purple",
+    "lavender",
     "yellow",
+    "mustard",
     "orange",
     "silver",
     "gold",
+    "bronze",
     "multicolor",
 ]
 
@@ -123,7 +197,7 @@ MATERIALS = [
     "wool",
     "cashmere",
     "leather",
-    "faux leather",
+    "faux_leather",
     "linen",
     "silk",
     "satin",
@@ -132,6 +206,15 @@ MATERIALS = [
     "nylon",
     "suede",
     "chiffon",
+    "velvet",
+    "lace",
+    "mesh",
+    "ribbed_knit",
+    "jersey",
+    "tweed",
+    "corduroy",
+    "canvas",
+    "faux_fur",
 ]
 
 PATTERNS = [
@@ -140,10 +223,15 @@ PATTERNS = [
     "plaid",
     "checkered",
     "floral",
-    "animal print",
-    "polka dot",
+    "animal_print",
+    "polka_dot",
     "graphic",
-    "textured",
+    "gingham",
+    "abstract",
+    "houndstooth",
+    "camo",
+    "paisley",
+    "colorblock",
 ]
 
 STYLE_TAGS = [
@@ -157,6 +245,16 @@ STYLE_TAGS = [
     "streetwear",
     "preppy",
     "casual",
+    "chic",
+    "feminine",
+    "elegant",
+    "trendy",
+    "vintage",
+    "modern",
+    "business_casual",
+    "glam",
+    "relaxed",
+    "polished",
 ]
 
 FIT_TAGS = [
@@ -169,12 +267,19 @@ FIT_TAGS = [
     "straight_leg",
     "tapered",
     "bodycon",
+    "loose",
+    "boxy",
+    "regular_fit",
+    "high_rise",
+    "mid_rise",
+    "low_rise",
+    "full_length",
+    "ankle_length",
 ]
 
 OCCASION_TAGS = [
     "everyday",
     "work",
-    "business",
     "formal",
     "evening",
     "event",
@@ -182,6 +287,14 @@ OCCASION_TAGS = [
     "travel",
     "lounge",
     "vacation",
+    "party",
+    "date_night",
+    "wedding",
+    "beach",
+    "brunch",
+    "school",
+    "winter_event",
+    "summer_event",
 ]
 
 SEASON_TAGS = ["spring", "summer", "fall", "winter"]
@@ -194,28 +307,125 @@ SILHOUETTES = [
     "column",
     "wide_leg",
     "tapered",
+    "flared",
+    "bodycon",
+    "boxy",
+    "oversized",
+    "shift",
 ]
 
 ATTRIBUTES = [
     "crew_neck",
     "v_neck",
+    "scoop_neck",
+    "square_neck",
+    "sweetheart_neckline",
+    "mock_neck",
+    "turtleneck",
     "collared",
-    "button_front",
-    "sleeveless",
-    "short_sleeve",
-    "long_sleeve",
     "off_shoulder",
     "halter",
+    "strapless",
+    "one_shoulder",
+    "button_front",
+    "zip_front",
+    "open_front",
+    "wrap_closure",
+    "tie_front",
+    "belted",
+    "sleeveless",
+    "cap_sleeve",
+    "short_sleeve",
+    "three_quarter_sleeve",
+    "long_sleeve",
+    "puff_sleeve",
     "racerback",
-    "wrap",
+    "spaghetti_strap",
+    "wide_strap",
+    "slit",
+    "pleated",
+    "ruched",
+    "tiered",
+    "asymmetrical",
+    "mini_length",
+    "midi_length",
+    "maxi_length",
     "quilted",
     "waterproof",
+    "hooded",
+    "double_breasted",
+    "single_breasted",
+    "padded",
+    "cropped_jacket",
+    "oversized_blazer",
+    "distressed",
+    "ripped",
+    "cargo_pockets",
+    "pleated_front",
+    "drawstring",
+    "cuffed",
     "pointed_toe",
+    "round_toe",
+    "square_toe",
     "open_toe",
+    "closed_toe",
+    "ankle_strap",
+    "lace_up",
+    "slip_on",
+    "platform",
     "stiletto_heel",
     "block_heel",
     "kitten_heel",
-    "platform",
+    "wedge_heel",
+    "chunky_sole",
+    "structured",
+    "soft_structure",
+    "chain_strap",
+    "top_handle",
+    "shoulder_strap",
+    "detachable_strap",
+    "quilted_bag",
+    "oversized_bag",
+    "embellished",
+    "metallic",
+    "sheer",
+    "transparent",
+    "sequined",
+    "beaded",
+    "lace_trim",
+    "textured",
+]
+
+FORMALITY_VALUES = [
+    "casual",
+    "smart_casual",
+    "dressy",
+    "formal",
+    "semi_formal",
+]
+
+WARMTH_VALUES = [
+    "lightweight",
+    "midweight",
+    "heavyweight",
+]
+
+COVERAGE_VALUES = [
+    "revealing",
+    "balanced",
+    "covered",
+]
+
+STATEMENT_LEVEL_VALUES = [
+    "basic",
+    "staple",
+    "statement",
+]
+
+VERSATILITY_VALUES = [
+    "low",
+    "medium",
+    "high",
 ]
 
 CATEGORY_VALUES = tuple(CATEGORY_SUBCATEGORIES.keys())
@@ -224,6 +434,27 @@ SUBCATEGORY_VALUES = tuple(
     for subcategories in CATEGORY_SUBCATEGORIES.values()
     for subcategory in subcategories
 )
+CONTROLLED_SCALAR_VALUES = {
+    "category": frozenset(CATEGORY_VALUES),
+    "subcategory": frozenset(SUBCATEGORY_VALUES),
+    "primary_color": frozenset(COLORS),
+    "material": frozenset(MATERIALS),
+    "pattern": frozenset(PATTERNS),
+    "silhouette": frozenset(SILHOUETTES),
+    "formality": frozenset(FORMALITY_VALUES),
+    "warmth": frozenset(WARMTH_VALUES),
+    "coverage": frozenset(COVERAGE_VALUES),
+    "statement_level": frozenset(STATEMENT_LEVEL_VALUES),
+    "versatility": frozenset(VERSATILITY_VALUES),
+}
+CONTROLLED_LIST_VALUES = {
+    "secondary_colors": frozenset(COLORS),
+    "style_tags": frozenset(STYLE_TAGS),
+    "fit_tags": frozenset(FIT_TAGS),
+    "occasion_tags": frozenset(OCCASION_TAGS),
+    "season_tags": frozenset(SEASON_TAGS),
+    "attributes": frozenset(ATTRIBUTES),
+}
 
 
 def build_metadata_options() -> dict[str, object]:
@@ -237,6 +468,9 @@ def build_metadata_options() -> dict[str, object]:
             {"name": category, "subcategories": subcategories}
             for category, subcategories in CATEGORY_SUBCATEGORIES.items()
         ],
+        "subcategory_by_category": CATEGORY_SUBCATEGORIES,
+        "primary_colors": COLORS,
+        "secondary_colors": COLORS,
         "colors": COLORS,
         "materials": MATERIALS,
         "patterns": PATTERNS,
@@ -246,6 +480,11 @@ def build_metadata_options() -> dict[str, object]:
         "season_tags": SEASON_TAGS,
         "silhouettes": SILHOUETTES,
         "attributes": ATTRIBUTES,
+        "formality": FORMALITY_VALUES,
+        "warmth": WARMTH_VALUES,
+        "coverage": COVERAGE_VALUES,
+        "statement_level": STATEMENT_LEVEL_VALUES,
+        "versatility": VERSATILITY_VALUES,
     }
 
 
@@ -259,8 +498,12 @@ def is_supported_field_name(field_name: str) -> bool:
     return field_name in SUPPORTED_FIELD_NAMES
 
 
+def is_supported_input_field_name(field_name: str) -> bool:
+    return field_name in SUPPORTED_INPUT_FIELD_NAMES
+
+
 def is_supported_taxonomy_version(value: str) -> bool:
-    return value in {"closet-taxonomy-v1", TAXONOMY_VERSION}
+    return value in {"closet-taxonomy-v1", "closet-taxonomy-v2", TAXONOMY_VERSION}
 
 
 def canonicalize_category_filter(value: str) -> str | None:
@@ -304,4 +547,5 @@ def _canonicalize_controlled_value(
 
 def _normalize_filter_value(value: str) -> str:
     collapsed = re.sub(r"\s+", " ", value.strip())
-    return collapsed.casefold()
+    normalized = collapsed.replace("_", " ").replace("-", " ")
+    return normalized.casefold()

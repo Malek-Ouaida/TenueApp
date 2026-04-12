@@ -743,7 +743,7 @@ class ClosetRepository:
             for field_state in self.list_field_states(closet_item_id=item.id)
         }
         projection = self.get_metadata_projection(item_id=item.id)
-        colors = extract_list_value(field_states.get("colors"))
+        legacy_colors = extract_list_value(field_states.get("colors"))
         if projection is None:
             projection = ClosetItemMetadataProjection(
                 closet_item_id=item.id,
@@ -756,8 +756,18 @@ class ClosetRepository:
         projection.title = extract_string_value(field_states.get("title")) or item.title
         projection.category = extract_string_value(field_states.get("category"))
         projection.subcategory = extract_string_value(field_states.get("subcategory"))
-        projection.primary_color = colors[0] if colors else None
-        projection.secondary_colors = colors[1:] if len(colors) > 1 else None
+        primary_color_state = field_states.get("primary_color")
+        secondary_colors_state = field_states.get("secondary_colors")
+        projection.primary_color = (
+            extract_string_value(primary_color_state)
+            if primary_color_state is not None
+            else (legacy_colors[0] if legacy_colors else None)
+        )
+        projection.secondary_colors = (
+            extract_list_value(secondary_colors_state) or None
+            if secondary_colors_state is not None
+            else (legacy_colors[1:] if len(legacy_colors) > 1 else None)
+        )
         projection.material = extract_string_value(field_states.get("material"))
         projection.pattern = extract_string_value(field_states.get("pattern"))
         projection.brand = extract_string_value(field_states.get("brand"))
@@ -767,6 +777,11 @@ class ClosetRepository:
         projection.season_tags = extract_list_value(field_states.get("season_tags")) or None
         projection.silhouette = extract_string_value(field_states.get("silhouette"))
         projection.attributes = extract_list_value(field_states.get("attributes")) or None
+        projection.formality = extract_string_value(field_states.get("formality"))
+        projection.warmth = extract_string_value(field_states.get("warmth"))
+        projection.coverage = extract_string_value(field_states.get("coverage"))
+        projection.statement_level = extract_string_value(field_states.get("statement_level"))
+        projection.versatility = extract_string_value(field_states.get("versatility"))
         projection.confirmed_at = item.confirmed_at
 
         self.session.flush()

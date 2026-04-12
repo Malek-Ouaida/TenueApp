@@ -95,6 +95,9 @@ def test_confirm_review_persists_photo_wear_event_for_calendar_and_insights(
     run_wear_worker_once(db_session, fake_storage_client, fake_wear_detection_provider)
 
     review_detail = client.get(f"/wear-logs/{wear_log['id']}", headers=headers).json()
+    assert review_detail["detected_items"][0]["exact_match"] is True
+    assert review_detail["detected_items"][1]["exact_match"] is True
+    assert review_detail["detected_items"][0]["candidate_matches"][0]["match_state"] == "exact_match"
     confirm_response = client.post(
         f"/wear-logs/{wear_log['id']}/confirm",
         headers=headers,

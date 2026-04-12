@@ -428,6 +428,9 @@ class WearEventDetectedItem(Base):
     predicted_fit_tags_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     predicted_silhouette: Mapped[str | None] = mapped_column(String(64), nullable=True)
     predicted_attributes_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    normalized_metadata_json: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    field_confidences_json: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    matching_explanation_json: Mapped[Any | None] = mapped_column(JSON, nullable=True)
 
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     bbox_json: Mapped[dict[str, float] | None] = mapped_column(JSON, nullable=True)

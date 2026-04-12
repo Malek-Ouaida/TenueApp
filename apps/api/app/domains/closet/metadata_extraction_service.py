@@ -45,14 +45,10 @@ from app.domains.closet.models import (
 )
 from app.domains.closet.normalization_service import ClosetNormalizationService
 from app.domains.closet.repository import ClosetJobRepository, ClosetRepository
-from app.domains.closet.taxonomy import SUPPORTED_FIELD_NAMES
+from app.domains.closet.taxonomy import LIST_FIELD_NAMES, SUPPORTED_FIELD_NAMES
 
 REEXTRACT_METADATA_OPERATION = "reextract_metadata_extraction"
 REEXTRACT_RESOURCE_TYPE = "closet_item"
-
-LIST_FIELD_NAMES = frozenset(
-    {"colors", "style_tags", "fit_tags", "occasion_tags", "season_tags", "attributes"}
-)
 
 
 @dataclass(frozen=True)
@@ -626,6 +622,11 @@ class ClosetMetadataExtractionService:
         ignored_fields: list[str] = []
 
         for field_name, raw_field in raw_fields.items():
+            if field_name == "colors":
+                alias_candidates, alias_warnings = self._parse_legacy_colors_field(raw_field)
+                candidates.extend(alias_candidates)
+                warnings.extend(alias_warnings)
+                continue
             if field_name not in SUPPORTED_FIELD_NAMES:
                 ignored_fields.append(str(field_name))
                 continue
@@ -709,6 +710,75 @@ class ClosetMetadataExtractionService:
             ),
             None,
         )
+
+    def _parse_legacy_colors_field(self, raw_field: Any) -> tuple[list[ParsedFieldCandidate], list[str]]:
+        warnings: list[str] = []
+        payload = raw_field if isinstance(raw_field, dict) else {"values": raw_field}
+        if not isinstance(payload, dict):
+            return [], ["colors: extraction payload was not parseable."]
+
+        applicability_state = self._parse_applicability_state(
+            payload.get("applicability_state"),
+            field_name="colors",
+            warnings=warnings,
+        )
+        confidence = self._parse_confidence(
+            payload.get("confidence"),
+            field_name="colors",
+            warnings=warnings,
+        )
+        notes = payload.get("notes")
+        if isinstance(notes, str) and notes.strip():
+            warnings.append(f"colors: {notes.strip()}")
+
+        raw_values = self._sanitize_list_value(payload.get("values", payload.get("value"))) or []
+        if applicability_state == ApplicabilityState.VALUE and not raw_values:
+            return [], warnings + ["colors: expected non-empty list values."]
+
+        candidates: list[ParsedFieldCandidate] = []
+        conflict_notes = " ".join(warnings) if warnings else None
+        if applicability_state != ApplicabilityState.VALUE:
+            candidates.append(
+                ParsedFieldCandidate(
+                    field_name="primary_color",
+                    raw_value=None,
+                    confidence=confidence,
+                    applicability_state=applicability_state,
+                    conflict_notes=conflict_notes,
+                )
+            )
+            candidates.append(
+                ParsedFieldCandidate(
+                    field_name="secondary_colors",
+                    raw_value=None,
+                    confidence=confidence,
+                    applicability_state=applicability_state,
+                    conflict_notes=conflict_notes,
+                )
+            )
+            return candidates, warnings
+
+        if raw_values:
+            candidates.append(
+                ParsedFieldCandidate(
+                    field_name="primary_color",
+                    raw_value=raw_values[0],
+                    confidence=confidence,
+                    applicability_state=ApplicabilityState.VALUE,
+                    conflict_notes=conflict_notes,
+                )
+            )
+        if len(raw_values) > 1:
+            candidates.append(
+                ParsedFieldCandidate(
+                    field_name="secondary_colors",
+                    raw_value=raw_values[1:],
+                    confidence=confidence,
+                    applicability_state=ApplicabilityState.VALUE,
+                    conflict_notes=conflict_notes,
+                )
+            )
+        return candidates, warnings
 
     def _parse_applicability_state(
         self,

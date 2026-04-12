@@ -53,17 +53,11 @@ from app.domains.closet.repository import (
 from app.domains.closet.service import ClosetLifecycleService
 from app.domains.closet.similarity_service import ClosetSimilarityService
 from app.domains.closet.taxonomy import (
-    ATTRIBUTES,
-    CATEGORY_SUBCATEGORIES,
-    COLORS,
-    FIT_TAGS,
-    MATERIALS,
-    OCCASION_TAGS,
-    PATTERNS,
+    CONTROLLED_LIST_VALUES,
+    CONTROLLED_SCALAR_VALUES,
+    FREE_TEXT_FIELDS,
+    LIST_FIELD_NAMES,
     REQUIRED_CONFIRMATION_FIELDS,
-    SEASON_TAGS,
-    SILHOUETTES,
-    STYLE_TAGS,
     SUPPORTED_FIELD_ORDER,
     TAXONOMY_VERSION,
 )
@@ -71,35 +65,6 @@ from app.domains.closet.taxonomy import (
 RETRY_STEP_IMAGE_PROCESSING = "image_processing"
 RETRY_STEP_METADATA_EXTRACTION = "metadata_extraction"
 RETRY_STEP_NORMALIZATION = "normalization_projection"
-
-SCALAR_CONTROLLED_FIELDS = frozenset(
-    {"category", "subcategory", "material", "pattern", "silhouette"}
-)
-LIST_FIELDS = frozenset(
-    {"colors", "style_tags", "fit_tags", "occasion_tags", "season_tags", "attributes"}
-)
-
-CATEGORY_VALUES = frozenset(CATEGORY_SUBCATEGORIES.keys())
-SUBCATEGORY_VALUES = frozenset(
-    subcategory
-    for subcategories in CATEGORY_SUBCATEGORIES.values()
-    for subcategory in subcategories
-)
-CONTROLLED_LIST_VALUES = {
-    "colors": frozenset(COLORS),
-    "style_tags": frozenset(STYLE_TAGS),
-    "fit_tags": frozenset(FIT_TAGS),
-    "occasion_tags": frozenset(OCCASION_TAGS),
-    "season_tags": frozenset(SEASON_TAGS),
-    "attributes": frozenset(ATTRIBUTES),
-}
-CONTROLLED_SCALAR_VALUES = {
-    "category": CATEGORY_VALUES,
-    "subcategory": SUBCATEGORY_VALUES,
-    "material": frozenset(MATERIALS),
-    "pattern": frozenset(PATTERNS),
-    "silhouette": frozenset(SILHOUETTES),
-}
 
 
 @dataclass(frozen=True)
@@ -541,17 +506,20 @@ class ClosetReviewService:
         candidates = self.repository.list_field_candidates_for_provider_result(
             provider_result_id=provider_result.id
         )
-        normalized_values = {
-            candidate.field_name: normalize_field_value(
-                field_name=candidate.field_name,
-                raw_value=candidate.raw_value,
-                applicability_state=candidate.applicability_state,
-                confidence=candidate.confidence,
-            )
-            for candidate in candidates
-        }
+        normalized_values: dict[str, NormalizedFieldValue] = {}
+        candidate_by_field: dict[str, object] = {}
+        for candidate in candidates:
+            expanded = self._expand_candidate_aliases(candidate)
+            for field_name, raw_value, applicability_state in expanded:
+                normalized_values[field_name] = normalize_field_value(
+                    field_name=field_name,
+                    raw_value=raw_value,
+                    applicability_state=applicability_state,
+                    confidence=candidate.confidence,
+                )
+                candidate_by_field[field_name] = candidate
+
         normalized_values, derived_category = self._reconcile_suggested_taxonomy(normalized_values)
-        candidate_by_field = {candidate.field_name: candidate for candidate in candidates}
 
         suggestions: dict[str, ReviewSuggestedFieldStateSnapshot] = {}
         for field_name, normalized_value in normalized_values.items():
@@ -579,6 +547,30 @@ class ClosetReviewService:
                 is_derived=field_name == "category" and derived_category,
             )
         return suggestions
+
+    def _expand_candidate_aliases(
+        self,
+        candidate: object,
+    ) -> list[tuple[str, Any, ApplicabilityState]]:
+        field_name = str(getattr(candidate, "field_name"))
+        raw_value = getattr(candidate, "raw_value")
+        applicability_state = getattr(candidate, "applicability_state")
+        if field_name != "colors":
+            return [(field_name, raw_value, applicability_state)]
+
+        if applicability_state != ApplicabilityState.VALUE:
+            return [
+                ("primary_color", None, applicability_state),
+                ("secondary_colors", None, applicability_state),
+            ]
+
+        values = raw_value if isinstance(raw_value, list) else []
+        expanded: list[tuple[str, Any, ApplicabilityState]] = []
+        if values:
+            expanded.append(("primary_color", values[0], ApplicabilityState.VALUE))
+        if len(values) > 1:
+            expanded.append(("secondary_colors", values[1:], ApplicabilityState.VALUE))
+        return expanded
 
     def _reconcile_suggested_taxonomy(
         self,
@@ -905,7 +897,7 @@ class ClosetReviewService:
         return planned_mutations
 
     def _validate_manual_value(self, *, field_name: str, canonical_value: Any) -> Any:
-        if field_name in {"title", "brand"}:
+        if field_name in FREE_TEXT_FIELDS:
             if not isinstance(canonical_value, str):
                 raise build_error(
                     INVALID_REVIEW_MUTATION,
@@ -924,7 +916,7 @@ class ClosetReviewService:
                 )
             return normalized
 
-        if field_name in SCALAR_CONTROLLED_FIELDS:
+        if field_name in CONTROLLED_SCALAR_VALUES:
             if not isinstance(canonical_value, str):
                 raise build_error(
                     INVALID_REVIEW_MUTATION,
@@ -939,7 +931,7 @@ class ClosetReviewService:
                 )
             return normalized
 
-        if field_name in LIST_FIELDS:
+        if field_name in LIST_FIELD_NAMES:
             raw_values: list[str]
             if isinstance(canonical_value, str):
                 raw_values = [collapse_whitespace(canonical_value)]

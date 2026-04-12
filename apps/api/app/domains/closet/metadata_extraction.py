@@ -10,10 +10,21 @@ import httpx
 from app.core.config import settings
 from app.domains.closet.models import ProviderResultStatus
 from app.domains.closet.taxonomy import (
+    ATTRIBUTES,
     CATEGORY_SUBCATEGORIES,
+    COLORS,
+    FIT_TAGS,
+    FORMALITY_VALUES,
+    MATERIALS,
     OCCASION_TAGS,
+    PATTERNS,
     SEASON_TAGS,
+    SILHOUETTES,
+    STATEMENT_LEVEL_VALUES,
     STYLE_TAGS,
+    VERSATILITY_VALUES,
+    WARMTH_VALUES,
+    COVERAGE_VALUES,
 )
 
 METADATA_EXTRACTION_TASK_TYPE = "metadata_extraction"
@@ -270,16 +281,30 @@ def build_extraction_prompt() -> str:
         "You extract raw structured garment metadata from a single clothing-item image. "
         "Return JSON only, with no markdown. "
         "Use only these top-level fields when present: "
-        "title, category, subcategory, colors, material, pattern, brand, style_tags, "
-        "occasion_tags, season_tags. "
+        "title, category, subcategory, primary_color, secondary_colors, material, pattern, "
+        "brand, style_tags, fit_tags, occasion_tags, season_tags, silhouette, attributes, "
+        "formality, warmth, coverage, statement_level, versatility. "
         "Scalar fields must be objects with keys: value, confidence, applicability_state, notes. "
         "List fields must be objects with keys: values, confidence, applicability_state, notes. "
         "applicability_state must be one of value, unknown, not_applicable. "
+        "Use canonical underscore values whenever possible. "
         f"Allowed categories: {categories}. "
         f"Allowed subcategories by category: {subcategories}. "
+        f"Allowed primary_color and secondary_colors values: {', '.join(COLORS)}. "
+        f"Allowed materials: {', '.join(MATERIALS)}. "
+        f"Allowed patterns: {', '.join(PATTERNS)}. "
         f"Style tags should prefer: {', '.join(STYLE_TAGS)}. "
+        f"Fit tags should prefer: {', '.join(FIT_TAGS)}. "
         f"Occasion tags should prefer: {', '.join(OCCASION_TAGS)}. "
         f"Season tags should prefer: {', '.join(SEASON_TAGS)}. "
+        f"Silhouette should prefer: {', '.join(SILHOUETTES)}. "
+        f"Attributes should prefer: {', '.join(ATTRIBUTES)}. "
+        f"Formality should prefer: {', '.join(FORMALITY_VALUES)}. "
+        f"Warmth should prefer: {', '.join(WARMTH_VALUES)}. "
+        f"Coverage should prefer: {', '.join(COVERAGE_VALUES)}. "
+        f"Statement level should prefer: {', '.join(STATEMENT_LEVEL_VALUES)}. "
+        f"Versatility should prefer: {', '.join(VERSATILITY_VALUES)}. "
+        "Fields that are not visually inferable should use applicability_state=unknown instead of guessing. "
         "Do not invent unsupported fields."
     )
 

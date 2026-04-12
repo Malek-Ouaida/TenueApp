@@ -30,7 +30,7 @@ def build_raw_fields(*, category: str = "top", subcategory: str = "tee shirt", c
             "confidence": 0.97,
             "applicability_state": "value",
         },
-        "colors": {"value": [color], "confidence": 0.92, "applicability_state": "value"},
+        "primary_color": {"value": color, "confidence": 0.92, "applicability_state": "value"},
     }
 
 
@@ -64,7 +64,7 @@ def create_confirmed_item(
         changes=[
             {"field_name": "category", "operation": "accept_suggestion"},
             {"field_name": "subcategory", "operation": "accept_suggestion"},
-            {"field_name": "colors", "operation": "accept_suggestion"},
+            {"field_name": "primary_color", "operation": "accept_suggestion"},
         ],
     )
     return item_id

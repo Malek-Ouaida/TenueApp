@@ -11,6 +11,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.core.config import settings
 from app.domains.closet.models import (
     ClosetItem,
+    ClosetItemFieldState,
     ClosetItemImage,
     ClosetItemImageRole,
     ClosetItemMetadataProjection,
@@ -690,6 +691,9 @@ class WearRepository:
         predicted_fit_tags_json: list[str] | None,
         predicted_silhouette: str | None,
         predicted_attributes_json: list[str] | None,
+        normalized_metadata_json: Any | None,
+        field_confidences_json: Any | None,
+        matching_explanation_json: Any | None,
         confidence: float | None,
         bbox_json: dict[str, float] | None,
         crop_asset_id: UUID | None,
@@ -709,6 +713,9 @@ class WearRepository:
             predicted_fit_tags_json=predicted_fit_tags_json,
             predicted_silhouette=predicted_silhouette,
             predicted_attributes_json=predicted_attributes_json,
+            normalized_metadata_json=normalized_metadata_json,
+            field_confidences_json=field_confidences_json,
+            matching_explanation_json=matching_explanation_json,
             confidence=confidence,
             bbox_json=bbox_json,
             crop_asset_id=crop_asset_id,
@@ -889,6 +896,36 @@ class WearRepository:
             for item, projection in self.session.execute(statement).all()
         }
 
+    def get_active_confirmed_closet_items_with_projections_for_user(
+        self,
+        *,
+        item_ids: list[UUID],
+        user_id: UUID,
+    ) -> dict[UUID, tuple[ClosetItem, ClosetItemMetadataProjection]]:
+        if not item_ids:
+            return {}
+
+        statement = (
+            select(ClosetItem, ClosetItemMetadataProjection)
+            .join(
+                ClosetItemMetadataProjection,
+                ClosetItemMetadataProjection.closet_item_id == ClosetItem.id,
+            )
+            .where(
+                ClosetItem.id.in_(item_ids),
+                ClosetItem.user_id == user_id,
+                ClosetItem.lifecycle_status == LifecycleStatus.CONFIRMED,
+                ClosetItem.review_status == ReviewStatus.CONFIRMED,
+                ClosetItem.confirmed_at.is_not(None),
+                ClosetItem.archived_at.is_(None),
+                ClosetItemMetadataProjection.user_id == user_id,
+            )
+        )
+        return {
+            item.id: (item, projection)
+            for item, projection in self.session.execute(statement).all()
+        }
+
     def list_active_confirmed_closet_items_with_projections_for_user(
         self,
         *,
@@ -910,7 +947,30 @@ class WearRepository:
             )
             .order_by(ClosetItem.confirmed_at.desc(), ClosetItem.id.asc())
         )
-        return list(self.session.execute(statement).all())
+        rows = self.session.execute(statement).all()
+        return [(item, projection) for item, projection in rows]
+
+    def list_closet_field_states_for_items(
+        self,
+        *,
+        closet_item_ids: list[UUID],
+    ) -> dict[UUID, dict[str, ClosetItemFieldState]]:
+        if not closet_item_ids:
+            return {}
+        statement = (
+            select(ClosetItemFieldState)
+            .where(ClosetItemFieldState.closet_item_id.in_(closet_item_ids))
+            .order_by(
+                ClosetItemFieldState.closet_item_id.asc(),
+                ClosetItemFieldState.updated_at.desc(),
+                ClosetItemFieldState.id.desc(),
+            )
+        )
+        field_states_by_item: dict[UUID, dict[str, ClosetItemFieldState]] = {}
+        for field_state in self.session.execute(statement).scalars():
+            by_name = field_states_by_item.setdefault(field_state.closet_item_id, {})
+            by_name.setdefault(field_state.field_name, field_state)
+        return field_states_by_item
 
     def list_active_image_assets_for_items(
         self,

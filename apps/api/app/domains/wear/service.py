@@ -8,6 +8,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from uuid import UUID
 
@@ -39,6 +40,7 @@ from app.domains.wear.models import (
     WearTimePrecision,
     WearUploadIntentStatus,
 )
+from app.domains.wear.metadata import empty_field_confidences, empty_metadata
 from app.domains.wear.repository import WearRepository
 
 logger = logging.getLogger(__name__)
@@ -105,7 +107,10 @@ class WearMatchCandidateSnapshot:
     closet_item_id: UUID
     rank: int
     score: float
-    signals: object | None
+    normalized_confidence: float | None
+    match_state: str
+    is_exact_match: bool
+    explanation: dict[str, Any] | None
     item: WearCandidateItemSnapshot | None
 
 
@@ -116,12 +121,17 @@ class WearDetectedItemSnapshot:
     predicted_category: str | None
     predicted_subcategory: str | None
     predicted_colors: list[str]
+    normalized_metadata: dict[str, Any]
+    field_confidences: dict[str, float | None]
     confidence: float | None
     bbox: dict[str, float] | None
     status: str
     exclusion_reason: str | None
     crop_image: WearMediaSnapshot | None
     candidate_matches: list[WearMatchCandidateSnapshot]
+    match_resolution: dict[str, Any] | None
+    exact_match: bool
+    structured_explanation: dict[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -805,11 +815,15 @@ class WearService:
                 detail_context.outfits_by_id.get(wear_log.outfit_id)
             )
         photos = [
-            self._build_photo_snapshot(
-                photo=photo,
-                photo_assets_by_photo_id=detail_context.photo_assets_by_photo_id,
-            )
+            photo_snapshot
             for photo in detail_context.photos_by_log.get(wear_log.id, [])
+            for photo_snapshot in [
+                self._build_photo_snapshot(
+                    photo=photo,
+                    photo_assets_by_photo_id=detail_context.photo_assets_by_photo_id,
+                )
+            ]
+            if photo_snapshot is not None
         ]
         primary_photo = None
         if wear_log.primary_photo_id is not None:
@@ -818,7 +832,6 @@ class WearService:
                 None,
             )
         detected_items = detail_context.detected_items_by_log.get(wear_log.id, [])
-        detected_item_ids = [item.id for item in detected_items]
         candidate_map = detail_context.candidates_by_detected_item
         review_version = self._build_review_version(
             wear_log=wear_log,
@@ -826,10 +839,13 @@ class WearService:
             detected_items=detected_items,
             candidate_map=candidate_map,
         )
+        worn_at = _require_normalized_datetime(wear_log.worn_at)
+        created_at = _require_normalized_datetime(wear_log.created_at)
+        updated_at = _require_normalized_datetime(wear_log.updated_at)
         return WearLogDetailSnapshot(
             id=wear_log.id,
             wear_date=wear_log.wear_date,
-            worn_at=normalize_datetime(wear_log.worn_at),
+            worn_at=worn_at,
             worn_time_precision=wear_log.worn_time_precision.value,
             captured_at=normalize_datetime(wear_log.captured_at),
             timezone_name=wear_log.timezone_name,
@@ -867,8 +883,8 @@ class WearService:
             can_confirm=wear_log.status in {WearLogStatus.NEEDS_REVIEW, WearLogStatus.FAILED},
             failure_code=wear_log.failure_code,
             failure_summary=wear_log.failure_summary,
-            created_at=normalize_datetime(wear_log.created_at),
-            updated_at=normalize_datetime(wear_log.updated_at),
+            created_at=created_at,
+            updated_at=updated_at,
         )
 
     def _build_detail_context(
@@ -943,10 +959,18 @@ class WearService:
                     for candidate in candidates
                 }
             )
-            candidate_items_by_id = self.repository.get_closet_items_with_projections_for_user(
+            candidate_items_by_id = self.repository.get_active_confirmed_closet_items_with_projections_for_user(
                 item_ids=candidate_item_ids,
                 user_id=user_id,
             )
+            valid_candidate_item_ids = set(candidate_items_by_id.keys())
+            candidates_by_detected_item = {
+                detected_item_id: self._filter_visible_candidate_matches(
+                    candidate_matches=candidates,
+                    valid_item_ids=valid_candidate_item_ids,
+                )
+                for detected_item_id, candidates in candidates_by_detected_item.items()
+            }
             candidate_images_by_item = self.repository.list_active_image_assets_for_items(
                 closet_item_ids=list(candidate_items_by_id.keys()),
                 roles=[
@@ -1105,10 +1129,13 @@ class WearService:
         photos_by_log: dict[UUID, list[WearEventPhoto]],
     ) -> WearLogTimelineItemSnapshot:
         snapshot_title = snapshot.outfit_title_snapshot if snapshot is not None else None
+        worn_at = _require_normalized_datetime(wear_log.worn_at)
+        created_at = _require_normalized_datetime(wear_log.created_at)
+        updated_at = _require_normalized_datetime(wear_log.updated_at)
         return WearLogTimelineItemSnapshot(
             id=wear_log.id,
             wear_date=wear_log.wear_date,
-            worn_at=normalize_datetime(wear_log.worn_at),
+            worn_at=worn_at,
             context=wear_log.context.value if wear_log.context is not None else None,
             status=wear_log.status.value,
             item_count=len(snapshot_items),
@@ -1127,8 +1154,8 @@ class WearService:
                 outfits_by_id=outfits_by_id,
                 snapshot_title=snapshot_title,
             ),
-            created_at=normalize_datetime(wear_log.created_at),
-            updated_at=normalize_datetime(wear_log.updated_at),
+            created_at=created_at,
+            updated_at=updated_at,
         )
 
     def _build_calendar_event_snapshot(
@@ -1142,9 +1169,10 @@ class WearService:
         item_assets_by_id: dict[UUID, MediaAsset],
         photos_by_log: dict[UUID, list[WearEventPhoto]],
     ) -> WearCalendarEventSnapshot:
+        worn_at = _require_normalized_datetime(wear_log.worn_at)
         return WearCalendarEventSnapshot(
             id=wear_log.id,
-            worn_at=normalize_datetime(wear_log.worn_at),
+            worn_at=worn_at,
             status=wear_log.status.value,
             item_count=len(snapshot_items),
             cover_image=self._build_cover_image(
@@ -1260,6 +1288,76 @@ class WearService:
         candidate_item_assets_by_id: dict[UUID, MediaAsset],
         crop_assets_by_id: dict[UUID, MediaAsset],
     ) -> WearDetectedItemSnapshot:
+        explanation_payload = (
+            detected_item.matching_explanation_json
+            if isinstance(detected_item.matching_explanation_json, dict)
+            else {}
+        )
+        normalized_metadata = self._build_detected_item_metadata(detected_item=detected_item)
+        field_confidences = self._build_detected_item_field_confidences(detected_item=detected_item)
+        visible_candidate_matches = self._filter_visible_candidate_matches(
+            candidate_matches=candidate_matches,
+            valid_item_ids=set(candidate_items_by_id.keys()),
+        )
+        candidate_snapshots = [
+            self._build_match_candidate_snapshot(
+                candidate=candidate,
+                item_record=candidate_items_by_id.get(candidate.closet_item_id),
+                assets_by_id=candidate_item_assets_by_id,
+            )
+            for candidate in visible_candidate_matches
+        ]
+        derived_match_resolution = self._build_match_resolution_fallback(
+            candidate_matches=candidate_snapshots,
+        )
+        stored_match_resolution = explanation_payload.get("match_resolution")
+        if not isinstance(stored_match_resolution, dict):
+            stored_match_resolution = None
+        exact_match = explanation_payload.get("exact_match")
+        if not isinstance(exact_match, bool):
+            exact_match = derived_match_resolution["state"] == "exact_match"
+        elif exact_match and derived_match_resolution["state"] != "exact_match":
+            exact_match = False
+        match_resolution = stored_match_resolution
+        if (
+            match_resolution is None
+            or not isinstance(match_resolution.get("state"), str)
+            or (
+                exact_match
+                and match_resolution.get("state") != "exact_match"
+            )
+            or (
+                not exact_match
+                and match_resolution.get("state") == "exact_match"
+            )
+            or (
+                not candidate_snapshots
+                and match_resolution.get("state") != "no_match"
+            )
+            or (
+                candidate_snapshots
+                and not exact_match
+                and match_resolution.get("state") == "no_match"
+            )
+        ):
+            match_resolution = derived_match_resolution
+        structured_explanation = explanation_payload.get("structured_explanation")
+        if isinstance(structured_explanation, dict):
+            structured_explanation = {
+                **structured_explanation,
+                "returned_candidate_ids": [
+                    str(candidate.closet_item_id) for candidate in candidate_snapshots
+                ],
+            }
+            if structured_explanation.get("reason") == "exact_match" and not exact_match:
+                structured_explanation["reason"] = match_resolution["reason"]
+        else:
+            structured_explanation = {
+                "reason": match_resolution["reason"],
+                "returned_candidate_ids": [
+                    str(candidate.closet_item_id) for candidate in candidate_snapshots
+                ],
+            }
         return WearDetectedItemSnapshot(
             id=detected_item.id,
             predicted_role=(
@@ -1270,6 +1368,8 @@ class WearService:
             predicted_category=detected_item.predicted_category,
             predicted_subcategory=detected_item.predicted_subcategory,
             predicted_colors=list(detected_item.predicted_colors_json or []),
+            normalized_metadata=normalized_metadata,
+            field_confidences=field_confidences,
             confidence=detected_item.confidence,
             bbox=detected_item.bbox_json,
             status=detected_item.status.value,
@@ -1280,15 +1380,109 @@ class WearService:
                 and detected_item.crop_asset_id in crop_assets_by_id
                 else None
             ),
-            candidate_matches=[
-                self._build_match_candidate_snapshot(
-                    candidate=candidate,
-                    item_record=candidate_items_by_id.get(candidate.closet_item_id),
-                    assets_by_id=candidate_item_assets_by_id,
-                )
-                for candidate in candidate_matches
-            ],
+            candidate_matches=candidate_snapshots,
+            match_resolution=match_resolution,
+            exact_match=exact_match,
+            structured_explanation=structured_explanation,
         )
+
+    def _build_detected_item_metadata(
+        self,
+        *,
+        detected_item: WearEventDetectedItem,
+    ) -> dict[str, Any]:
+        metadata = empty_metadata()
+        payload = detected_item.normalized_metadata_json
+        if isinstance(payload, dict):
+            for field_name in metadata:
+                value = payload.get(field_name)
+                if isinstance(value, list):
+                    metadata[field_name] = list(value) or None
+                else:
+                    metadata[field_name] = value
+
+        predicted_colors = [
+            value.strip()
+            for value in detected_item.predicted_colors_json or []
+            if isinstance(value, str) and value.strip()
+        ]
+        if metadata["category"] is None:
+            metadata["category"] = detected_item.predicted_category
+        if metadata["subcategory"] is None:
+            metadata["subcategory"] = detected_item.predicted_subcategory
+        if metadata["primary_color"] is None:
+            metadata["primary_color"] = predicted_colors[0] if predicted_colors else None
+        if metadata["secondary_colors"] is None:
+            metadata["secondary_colors"] = predicted_colors[1:] or None
+        if metadata["material"] is None:
+            metadata["material"] = detected_item.predicted_material
+        if metadata["pattern"] is None:
+            metadata["pattern"] = detected_item.predicted_pattern
+        if metadata["fit_tags"] is None:
+            metadata["fit_tags"] = list(detected_item.predicted_fit_tags_json or []) or None
+        if metadata["silhouette"] is None:
+            metadata["silhouette"] = detected_item.predicted_silhouette
+        if metadata["attributes"] is None:
+            metadata["attributes"] = list(detected_item.predicted_attributes_json or []) or None
+        return metadata
+
+    def _build_detected_item_field_confidences(
+        self,
+        *,
+        detected_item: WearEventDetectedItem,
+    ) -> dict[str, float | None]:
+        field_confidences = empty_field_confidences()
+        payload = detected_item.field_confidences_json
+        if not isinstance(payload, dict):
+            return field_confidences
+        for field_name in field_confidences:
+            value = payload.get(field_name)
+            field_confidences[field_name] = self._coerce_float(value)
+        return field_confidences
+
+    def _filter_visible_candidate_matches(
+        self,
+        *,
+        candidate_matches: list[WearEventMatchCandidate],
+        valid_item_ids: set[UUID],
+    ) -> list[WearEventMatchCandidate]:
+        visible_matches: list[WearEventMatchCandidate] = []
+        seen_item_ids: set[UUID] = set()
+        for candidate in candidate_matches:
+            if candidate.closet_item_id not in valid_item_ids:
+                continue
+            if candidate.closet_item_id in seen_item_ids:
+                continue
+            seen_item_ids.add(candidate.closet_item_id)
+            visible_matches.append(candidate)
+        return visible_matches
+
+    def _build_match_resolution_fallback(
+        self,
+        *,
+        candidate_matches: list[WearMatchCandidateSnapshot],
+    ) -> dict[str, Any]:
+        exact_candidate = next(
+            (candidate for candidate in candidate_matches if candidate.is_exact_match),
+            None,
+        )
+        if exact_candidate is not None:
+            return {
+                "state": "exact_match",
+                "closet_item_id": str(exact_candidate.closet_item_id),
+                "reason": "derived_from_candidate_signals",
+            }
+        if candidate_matches:
+            return {
+                "state": "candidate_only",
+                "closet_item_id": None,
+                "reason": "derived_from_candidate_signals",
+            }
+        return {
+            "state": "no_match",
+            "closet_item_id": None,
+            "reason": "no_candidates",
+        }
 
     def _build_match_candidate_snapshot(
         self,
@@ -1336,8 +1530,28 @@ class WearService:
             id=candidate.id,
             closet_item_id=candidate.closet_item_id,
             rank=candidate.rank,
-            score=round(float(candidate.score), 4),
-            signals=candidate.signals_json,
+            score=round(float(candidate.score), 2),
+            normalized_confidence=self._coerce_float(
+                candidate.signals_json.get("normalized_confidence")
+                if isinstance(candidate.signals_json, dict)
+                else None
+            ),
+            match_state=self._get_optional_str(
+                candidate.signals_json if isinstance(candidate.signals_json, dict) else {},
+                "match_state",
+            )
+            or "candidate",
+            is_exact_match=bool(
+                candidate.signals_json.get("is_exact_match")
+                if isinstance(candidate.signals_json, dict)
+                else False
+            ),
+            explanation=(
+                candidate.signals_json.get("explanation")
+                if isinstance(candidate.signals_json, dict)
+                and isinstance(candidate.signals_json.get("explanation"), dict)
+                else None
+            ),
             item=item_snapshot,
         )
 
@@ -1511,10 +1725,11 @@ class WearService:
         detected_items: list[WearEventDetectedItem],
         candidate_map: dict[UUID, list[WearEventMatchCandidate]],
     ) -> str:
+        updated_at = _require_normalized_datetime(wear_log.updated_at)
         payload = {
             "wear_log_id": str(wear_log.id),
             "status": wear_log.status.value,
-            "updated_at": normalize_datetime(wear_log.updated_at).isoformat(),
+            "updated_at": updated_at.isoformat(),
             "confirmed_items": [
                 {
                     "closet_item_id": str(item.closet_item_id),
@@ -1548,6 +1763,13 @@ class WearService:
         if isinstance(value, int):
             return value
         return default
+
+    def _coerce_float(self, value: object) -> float | None:
+        if isinstance(value, bool) or value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
 
     def _validate_calendar_range(self, *, start_date: date, end_date: date) -> None:
         if end_date < start_date:
@@ -1589,6 +1811,12 @@ def normalize_datetime(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _require_normalized_datetime(value: datetime | None) -> datetime:
+    normalized = normalize_datetime(value)
+    assert normalized is not None
+    return normalized
 
 
 def resolve_event_temporal_fields(
@@ -1660,9 +1888,11 @@ def encode_history_cursor(
     created_at: datetime,
     wear_log_id: UUID,
 ) -> str:
+    normalized_worn_at = _require_normalized_datetime(worn_at)
+    normalized_created_at = _require_normalized_datetime(created_at)
     payload = (
-        f"{normalize_datetime(worn_at).isoformat()}|"
-        f"{normalize_datetime(created_at).isoformat()}|"
+        f"{normalized_worn_at.isoformat()}|"
+        f"{normalized_created_at.isoformat()}|"
         f"{wear_log_id}"
     )
     return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("utf-8")
