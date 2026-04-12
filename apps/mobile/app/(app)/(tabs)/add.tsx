@@ -22,16 +22,16 @@ export default function AddScreen() {
   const { session } = useAuth();
   const upload = useClosetUpload(session?.access_token);
 
-  async function handleSource(source: "camera" | "library") {
+async function handleSource(source: "camera" | "library") {
     try {
       await triggerSelectionHaptic();
-      const draft = await upload.selectAndUpload(source);
-      if (!draft) {
+      const item = await upload.selectAndUpload(source);
+      if (!item) {
         return;
       }
 
       await triggerSuccessHaptic();
-      router.push(`/review/${draft.id}` as Href);
+      router.replace("/closet?tab=processing" as Href);
     } catch {
       await triggerErrorHaptic();
     }
@@ -39,13 +39,13 @@ export default function AddScreen() {
 
   async function retryUpload() {
     try {
-      const draft = await upload.retryLastUpload();
-      if (!draft) {
+      const item = await upload.retryLastUpload();
+      if (!item) {
         return;
       }
 
       await triggerSuccessHaptic();
-      router.push(`/review/${draft.id}` as Href);
+      router.replace("/closet?tab=processing" as Href);
     } catch {
       await triggerErrorHaptic();
     }
@@ -70,8 +70,8 @@ export default function AddScreen() {
         <Chip label="Primary flow" tone="spotlight" />
         <AppText variant="title">Add to Closet</AppText>
         <AppText color={colors.textMuted}>
-          Single garment photo, immediate upload, then processing and review until you confirm it
-          into the closet.
+          Single garment photo, immediate upload, then one clear processing queue until Tenue
+          asks for confirmation.
         </AppText>
         <View style={styles.buttonStack}>
           <Button
@@ -96,7 +96,8 @@ export default function AddScreen() {
             {upload.stage === "Sent to processing" ? (
               <>
                 <AppText color={colors.textMuted}>
-                  Keep uploading. Tenue will move ready items into confirmation automatically.
+                  Keep uploading. Processing is the single place to track what is still running and
+                  what is ready for confirmation.
                 </AppText>
                 <Button
                   label="Open Processing"

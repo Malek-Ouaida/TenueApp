@@ -214,9 +214,34 @@ export default function ClosetItemDetailScreen() {
   if (!detail.detail) {
     return (
       <View style={styles.loadingScreen}>
-        <AppText color={palette.muted} style={styles.emptyCopy}>
-          The confirmed item could not be loaded.
-        </AppText>
+        <View style={styles.emptyStateCard}>
+          <AppText color={palette.darkText} style={styles.emptyTitle}>
+            Closet item unavailable
+          </AppText>
+          <AppText color={palette.warmGray} style={styles.emptyCopy}>
+            {detail.error ?? "The confirmed item could not be loaded."}
+          </AppText>
+          <View style={styles.emptyActions}>
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.emptyActionButton, pressed ? styles.pressed : null]}
+            >
+              <AppText color={palette.darkText} style={styles.emptyActionLabel}>
+                Back
+              </AppText>
+            </Pressable>
+            <Pressable
+              onPress={() => void detail.refresh()}
+              style={({ pressed }) => [
+                styles.emptyActionButton,
+                styles.emptyActionButtonPrimary,
+                pressed ? styles.pressed : null
+              ]}
+            >
+              <AppText style={styles.emptyActionLabelPrimary}>Retry</AppText>
+            </Pressable>
+          </View>
+        </View>
       </View>
     );
   }
@@ -948,11 +973,61 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20
   },
+  emptyStateCard: {
+    width: "100%",
+    borderRadius: 28,
+    backgroundColor: palette.surface,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    gap: 14,
+    alignItems: "center",
+    shadowColor: palette.shadow,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 1,
+    shadowRadius: 24,
+    elevation: 6
+  },
+  emptyTitle: {
+    textAlign: "center",
+    fontFamily: fontFamilies.serifSemiBold,
+    fontSize: 24,
+    lineHeight: 28
+  },
   emptyCopy: {
     fontFamily: fontFamilies.sansRegular,
     fontSize: 15,
     lineHeight: 20,
     textAlign: "center"
+  },
+  emptyActions: {
+    flexDirection: "row",
+    gap: 10
+  },
+  emptyActionButton: {
+    minWidth: 108,
+    height: 42,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: palette.border,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.surface
+  },
+  emptyActionButtonPrimary: {
+    backgroundColor: palette.darkText,
+    borderColor: palette.darkText
+  },
+  emptyActionLabel: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 13,
+    lineHeight: 16
+  },
+  emptyActionLabelPrimary: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 13,
+    lineHeight: 16,
+    color: colors.white
   },
   pressed: {
     opacity: 0.78

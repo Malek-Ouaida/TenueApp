@@ -21,7 +21,8 @@ const PREFERRED_FIELD_ORDER = [
   "title",
   "category",
   "subcategory",
-  "colors",
+  "primary_color",
+  "secondary_colors",
   "material",
   "pattern",
   "brand",
@@ -30,7 +31,12 @@ const PREFERRED_FIELD_ORDER = [
   "style_tags",
   "fit_tags",
   "silhouette",
-  "attributes"
+  "attributes",
+  "formality",
+  "warmth",
+  "coverage",
+  "statement_level",
+  "versatility"
 ] as const;
 
 export function hasCanonicalValue(value: ClosetFieldCanonicalValue) {
@@ -87,9 +93,14 @@ export function asStringArray(value: ClosetFieldCanonicalValue): string[] {
 }
 
 export function fieldIsMultiValue(fieldName: string) {
-  return ["colors", "style_tags", "fit_tags", "occasion_tags", "season_tags", "attributes"].includes(
-    fieldName
-  );
+  return [
+    "secondary_colors",
+    "style_tags",
+    "fit_tags",
+    "occasion_tags",
+    "season_tags",
+    "attributes"
+  ].includes(fieldName);
 }
 
 export function formatFieldValue(value: ClosetFieldCanonicalValue): string | null {
@@ -114,12 +125,16 @@ function getFieldLabel(fieldName: string) {
       return "Occasion";
     case "season_tags":
       return "Season";
-    case "colors":
-      return "Color";
+    case "primary_color":
+      return "Primary color";
+    case "secondary_colors":
+      return "Secondary colors";
     case "fit_tags":
       return "Fit";
     case "attributes":
       return "Attributes";
+    case "statement_level":
+      return "Statement level";
     default:
       return humanizeEnum(fieldName);
   }
@@ -156,8 +171,10 @@ export function selectionOptionsForField(
       const allOptions = metadata.categories.flatMap((entry) => entry.subcategories);
       return Array.from(new Set(preferredOptions.concat(allOptions)));
     }
-    case "colors":
-      return metadata.colors;
+    case "primary_color":
+      return metadata.primary_colors;
+    case "secondary_colors":
+      return metadata.secondary_colors;
     case "material":
       return metadata.materials;
     case "pattern":
@@ -174,6 +191,16 @@ export function selectionOptionsForField(
       return metadata.silhouettes;
     case "attributes":
       return metadata.attributes;
+    case "formality":
+      return metadata.formality;
+    case "warmth":
+      return metadata.warmth;
+    case "coverage":
+      return metadata.coverage;
+    case "statement_level":
+      return metadata.statement_level;
+    case "versatility":
+      return metadata.versatility;
     default:
       return [];
   }

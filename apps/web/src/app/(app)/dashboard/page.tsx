@@ -71,17 +71,17 @@ export default async function DashboardPage() {
     }
   ] as const;
   const recentLooks = lookbookEntries
-    .filter((entry) => Boolean(getPrimaryImageUrl(entry.entry.image, entry.entry.outfit?.cover_image, entry.lookbook_cover_image)))
+    .filter((entry) => Boolean(getPrimaryImageUrl(entry.primary_image)))
     .slice(0, 3)
     .map((entry) => ({
-      id: entry.entry.id,
-      imageUrl: getPrimaryImageUrl(entry.entry.image, entry.entry.outfit?.cover_image, entry.lookbook_cover_image),
+      id: entry.id,
+      imageUrl: getPrimaryImageUrl(entry.primary_image),
       context:
-        entry.entry.caption ??
-        entry.entry.outfit?.title ??
-        entry.entry.note_text?.slice(0, 32) ??
-        entry.lookbook_title,
-      dateLabel: formatRecentLookDate(entry.entry.updated_at)
+        entry.title ??
+        entry.caption ??
+        entry.source_snapshot?.context ??
+        "Saved look",
+      dateLabel: formatRecentLookDate(entry.published_at ?? entry.updated_at)
     }));
 
   return (
