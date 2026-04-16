@@ -13,11 +13,16 @@ import {
   completeClosetUpload,
   createConfirmedClosetItemUploadIntent,
   createClosetDraft,
-  createClosetUploadIntent
+  createClosetUploadIntent,
+  getClosetExtractionSnapshot,
+  getClosetProcessingSnapshot
 } from "./client";
 
 const allowedMimeTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const maxUploadSizeBytes = 15 * 1024 * 1024;
+const processingPendingStatuses = new Set(["pending", "running"]);
+const batchProcessingPollIntervalMs = 1500;
+const batchProcessingTimeoutMs = 3 * 60 * 1000;
 
 export type UploadIdempotencyPath = {
   logical_key: string;
@@ -35,12 +40,45 @@ export type PreparedUploadAsset = {
   web_upload_body?: Uint8Array;
 };
 
+export type ClosetBatchUploadSnapshot = {
+  completedCount: number;
+  currentIndex: number | null;
+  error: string | null;
+  isRunning: boolean;
+  queuedCount: number;
+  stage: string | null;
+  totalCount: number;
+};
+
+type ClosetBatchUploadListener = (snapshot: ClosetBatchUploadSnapshot) => void;
+
+type QueuedClosetAsset = {
+  accessToken: string;
+  asset: ImagePicker.ImagePickerAsset;
+  title?: string | null;
+};
+
 type NativeCryptoHost = {
   randomUUID?: () => string;
   subtle?: {
     digest: (algorithm: string, data: BufferSource) => Promise<ArrayBuffer>;
   };
 };
+
+const idleClosetBatchUploadSnapshot: ClosetBatchUploadSnapshot = {
+  completedCount: 0,
+  currentIndex: null,
+  error: null,
+  isRunning: false,
+  queuedCount: 0,
+  stage: null,
+  totalCount: 0
+};
+
+const closetBatchUploadListeners = new Set<ClosetBatchUploadListener>();
+const queuedClosetAssets: QueuedClosetAsset[] = [];
+let closetBatchUploadSnapshot = { ...idleClosetBatchUploadSnapshot };
+let queuedClosetAssetDrain: Promise<void> | null = null;
 
 const sha256Constants = [
   0x428a2f98,
@@ -577,6 +615,212 @@ export async function uploadClosetAssets(params: {
   }
 
   return drafts;
+}
+
+function cloneClosetBatchUploadSnapshot() {
+  return { ...closetBatchUploadSnapshot };
+}
+
+function emitClosetBatchUploadSnapshot() {
+  const nextSnapshot = cloneClosetBatchUploadSnapshot();
+  for (const listener of closetBatchUploadListeners) {
+    listener(nextSnapshot);
+  }
+}
+
+function updateClosetBatchUploadSnapshot(
+  updater: (current: ClosetBatchUploadSnapshot) => ClosetBatchUploadSnapshot
+) {
+  closetBatchUploadSnapshot = updater(closetBatchUploadSnapshot);
+  emitClosetBatchUploadSnapshot();
+}
+
+function formatBatchStage(stage: string, currentIndex: number, totalCount: number) {
+  return `${stage} (${currentIndex}/${totalCount})`;
+}
+
+function sleep(delayMs: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
+function isClosetItemPipelineActive(params: {
+  extraction: Awaited<ReturnType<typeof getClosetExtractionSnapshot>> | null;
+  processing: Awaited<ReturnType<typeof getClosetProcessingSnapshot>>;
+}) {
+  if (
+    params.processing.lifecycle_status === "processing" ||
+    processingPendingStatuses.has(params.processing.processing_status)
+  ) {
+    return true;
+  }
+
+  if (!params.extraction) {
+    return false;
+  }
+
+  return (
+    processingPendingStatuses.has(params.extraction.extraction_status) ||
+    processingPendingStatuses.has(params.extraction.normalization_status)
+  );
+}
+
+async function waitForClosetItemPipelineToSettle(params: {
+  accessToken: string;
+  currentIndex: number;
+  itemId: string;
+}) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < batchProcessingTimeoutMs) {
+    updateClosetBatchUploadSnapshot((current) => ({
+      ...current,
+      currentIndex: params.currentIndex,
+      isRunning: true,
+      queuedCount: queuedClosetAssets.length,
+      stage: formatBatchStage("Processing image", params.currentIndex, current.totalCount)
+    }));
+
+    const [processing, extraction] = await Promise.all([
+      getClosetProcessingSnapshot(params.accessToken, params.itemId),
+      getClosetExtractionSnapshot(params.accessToken, params.itemId).catch(() => null)
+    ]);
+
+    if (!isClosetItemPipelineActive({ extraction, processing })) {
+      return;
+    }
+
+    await sleep(batchProcessingPollIntervalMs);
+  }
+
+  throw new Error(
+    "Tenue paused the queue because one photo is taking too long to finish processing."
+  );
+}
+
+async function drainQueuedClosetAssets() {
+  try {
+    while (queuedClosetAssets.length > 0) {
+      const queuedAsset = queuedClosetAssets.shift();
+      if (!queuedAsset) {
+        continue;
+      }
+
+      const currentIndex = closetBatchUploadSnapshot.completedCount + 1;
+
+      updateClosetBatchUploadSnapshot((current) => ({
+        ...current,
+        currentIndex,
+        error: null,
+        isRunning: true,
+        queuedCount: queuedClosetAssets.length
+      }));
+
+      const result = await uploadClosetAsset({
+        accessToken: queuedAsset.accessToken,
+        asset: queuedAsset.asset,
+        path: createUploadIdempotencyPath(buildLogicalRetryKey(queuedAsset.asset)),
+        title: queuedAsset.title,
+        onStageChange: (stage) => {
+          updateClosetBatchUploadSnapshot((current) => ({
+            ...current,
+            currentIndex,
+            isRunning: true,
+            queuedCount: queuedClosetAssets.length,
+            stage: formatBatchStage(stage, currentIndex, current.totalCount)
+          }));
+        }
+      });
+
+      await waitForClosetItemPipelineToSettle({
+        accessToken: queuedAsset.accessToken,
+        currentIndex,
+        itemId: result.draft.id
+      });
+
+      updateClosetBatchUploadSnapshot((current) => {
+        const completedCount = current.completedCount + 1;
+        const hasMoreQueuedAssets = queuedClosetAssets.length > 0;
+
+        return hasMoreQueuedAssets
+          ? {
+              ...current,
+              completedCount,
+              currentIndex: completedCount + 1,
+              isRunning: true,
+              queuedCount: queuedClosetAssets.length,
+              stage: formatBatchStage("Starting next photo", completedCount + 1, current.totalCount)
+            }
+          : { ...idleClosetBatchUploadSnapshot };
+      });
+    }
+  } catch (error) {
+    queuedClosetAssets.length = 0;
+    updateClosetBatchUploadSnapshot((current) => ({
+      ...current,
+      currentIndex: null,
+      error: error instanceof Error ? error.message : "Upload failed.",
+      isRunning: false,
+      queuedCount: 0,
+      stage: null
+    }));
+  } finally {
+    queuedClosetAssetDrain = null;
+    if (queuedClosetAssets.length > 0) {
+      queuedClosetAssetDrain = drainQueuedClosetAssets();
+    }
+  }
+}
+
+export function getClosetBatchUploadSnapshot() {
+  return cloneClosetBatchUploadSnapshot();
+}
+
+export function subscribeToClosetBatchUpload(listener: ClosetBatchUploadListener) {
+  closetBatchUploadListeners.add(listener);
+  listener(getClosetBatchUploadSnapshot());
+
+  return () => {
+    closetBatchUploadListeners.delete(listener);
+  };
+}
+
+export function queueClosetAssetsForUpload(params: {
+  accessToken: string;
+  assets: ImagePicker.ImagePickerAsset[];
+  title?: string | null;
+}) {
+  if (!params.assets.length) {
+    return getClosetBatchUploadSnapshot();
+  }
+
+  const isFreshQueue = !closetBatchUploadSnapshot.isRunning && queuedClosetAssets.length === 0;
+  queuedClosetAssets.push(
+    ...params.assets.map((asset) => ({
+      accessToken: params.accessToken,
+      asset,
+      title: params.title
+    }))
+  );
+
+  updateClosetBatchUploadSnapshot((current) => ({
+    completedCount: isFreshQueue ? 0 : current.completedCount,
+    currentIndex: isFreshQueue ? null : current.currentIndex,
+    error: null,
+    isRunning: true,
+    queuedCount: queuedClosetAssets.length,
+    stage:
+      current.stage ??
+      `Queued ${queuedClosetAssets.length} photo${queuedClosetAssets.length === 1 ? "" : "s"}`,
+    totalCount: (isFreshQueue ? 0 : current.totalCount) + params.assets.length
+  }));
+
+  if (!queuedClosetAssetDrain) {
+    queuedClosetAssetDrain = drainQueuedClosetAssets();
+  }
+
+  return getClosetBatchUploadSnapshot();
 }
 
 export async function uploadConfirmedClosetItemImage(params: {

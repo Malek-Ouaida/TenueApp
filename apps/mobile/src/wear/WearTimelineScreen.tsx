@@ -1,6 +1,6 @@
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { router, type Href } from "expo-router";
+import { router, useLocalSearchParams, type Href } from "expo-router";
 import type { ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 
@@ -31,13 +31,28 @@ function formatWearDate(value: string) {
   }).format(new Date(`${value}T12:00:00`));
 }
 
+function formatWearDayHeading(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "long",
+    day: "numeric"
+  }).format(new Date(`${value}T12:00:00`));
+}
+
 export default function WearTimelineScreen() {
+  const params = useLocalSearchParams<{ date?: string | string[] }>();
+  const selectedDate = Array.isArray(params.date) ? params.date[0] : params.date;
+  const isDayView = Boolean(selectedDate);
   const { session } = useAuth();
   const overview = useInsightOverview(session?.access_token);
-  const timeline = useWearTimeline(session?.access_token, {}, 40);
+  const timeline = useWearTimeline(
+    session?.access_token,
+    selectedDate ? { wear_date: selectedDate } : {},
+    40
+  );
   const calendar = useWearCalendar(session?.access_token, 14);
   const todayKey = formatLocalDate(new Date());
   const todayLog = calendar.days.find((day) => day.date === todayKey) ?? null;
+  const heading = selectedDate ? formatWearDayHeading(selectedDate) : "Wear History";
 
   return (
     <ScrollView
@@ -51,92 +66,114 @@ export default function WearTimelineScreen() {
           icon={<Feather color={featurePalette.foreground} name="arrow-left" size={18} />}
           onPress={() => router.back()}
         />
-        <AppText style={styles.headerTitle}>Wear History</AppText>
+        <AppText style={styles.headerTitle}>{heading}</AppText>
         <View style={styles.headerSpacer} />
       </View>
 
-      <View style={[styles.heroCard, featureShadows.md]}>
-        <View style={styles.heroGlowTop} />
-        <View style={styles.heroGlowBottom} />
-        <View style={styles.heroHeader}>
-          <View>
-            <AppText style={styles.heroTitle}>Your real wear timeline</AppText>
-            <AppText style={styles.heroSubtitle}>
-              Logged outfits, current streaks, and the last two weeks at a glance.
-            </AppText>
+      {isDayView ? (
+        <View style={[styles.heroCard, featureShadows.md]}>
+          <View style={styles.heroGlowTop} />
+          <View style={styles.heroGlowBottom} />
+          <View style={styles.heroHeader}>
+            <View>
+              <AppText style={styles.heroTitle}>All outfits from this day</AppText>
+              <AppText style={styles.heroSubtitle}>
+                Tenue keeps multiple OOTDs as separate wear logs, not one merged memory.
+              </AppText>
+            </View>
           </View>
-          <View style={styles.heroBadge}>
-            <MaterialCommunityIcons color="#DE6D39" name="fire" size={16} />
-            <AppText style={styles.heroBadgeLabel}>
-              {overview.data?.streaks.current_streak_days ?? 0} day streak
-            </AppText>
-          </View>
-        </View>
 
-        <View style={styles.metricRow}>
-          <MetricCard
-            icon={<Feather color="#4C6B40" name="calendar" size={16} />}
-            label="Wear logs"
-            tone="#F0FDF4"
-            value={`${overview.data?.all_time.total_wear_logs ?? timeline.items.length}`}
-          />
-          <MetricCard
-            icon={<Feather color="#7658C3" name="layers" size={16} />}
-            label="Unique worn"
-            tone="rgba(232, 219, 255, 0.35)"
-            value={`${overview.data?.all_time.unique_items_worn ?? 0}`}
-          />
-          <MetricCard
-            icon={<Feather color="#577B9A" name="activity" size={16} />}
-            label="This month"
-            tone="rgba(220, 234, 247, 0.35)"
-            value={`${overview.data?.current_month.total_wear_logs ?? 0}`}
+          <PrimaryActionButton
+            label="Log another OOTD"
+            onPress={() => push("/log-outfit")}
           />
         </View>
+      ) : (
+        <>
+          <View style={[styles.heroCard, featureShadows.md]}>
+            <View style={styles.heroGlowTop} />
+            <View style={styles.heroGlowBottom} />
+            <View style={styles.heroHeader}>
+              <View>
+                <AppText style={styles.heroTitle}>Your real wear timeline</AppText>
+                <AppText style={styles.heroSubtitle}>
+                  Logged outfits, current streaks, and the last two weeks at a glance.
+                </AppText>
+              </View>
+              <View style={styles.heroBadge}>
+                <MaterialCommunityIcons color="#DE6D39" name="fire" size={16} />
+                <AppText style={styles.heroBadgeLabel}>
+                  {overview.data?.streaks.current_streak_days ?? 0} day streak
+                </AppText>
+              </View>
+            </View>
 
-        <PrimaryActionButton
-          label={todayLog?.primary_event_id ? "Open today’s wear log" : "Log today’s outfit"}
-          onPress={() => push(todayLog?.primary_event_id ? `/wear/${todayLog.primary_event_id}` : "/log-outfit")}
-        />
-      </View>
+            <View style={styles.metricRow}>
+              <MetricCard
+                icon={<Feather color="#4C6B40" name="calendar" size={16} />}
+                label="Wear logs"
+                tone="#F0FDF4"
+                value={`${overview.data?.all_time.total_wear_logs ?? timeline.items.length}`}
+              />
+              <MetricCard
+                icon={<Feather color="#7658C3" name="layers" size={16} />}
+                label="Unique worn"
+                tone="rgba(232, 219, 255, 0.35)"
+                value={`${overview.data?.all_time.unique_items_worn ?? 0}`}
+              />
+              <MetricCard
+                icon={<Feather color="#577B9A" name="activity" size={16} />}
+                label="This month"
+                tone="rgba(220, 234, 247, 0.35)"
+                value={`${overview.data?.current_month.total_wear_logs ?? 0}`}
+              />
+            </View>
+
+            <PrimaryActionButton
+              label={todayLog?.primary_event_id ? "Open today’s wear log" : "Log today’s outfit"}
+              onPress={() => push(todayLog?.primary_event_id ? `/wear/${todayLog.primary_event_id}` : "/log-outfit")}
+            />
+          </View>
+
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <AppText style={styles.sectionTitle}>Last 14 days</AppText>
+              <AppText style={styles.sectionMeta}>Tap a day to open it</AppText>
+            </View>
+
+            <View style={[styles.calendarCard, featureShadows.sm]}>
+              <View style={styles.calendarGrid}>
+                {calendar.days.map((day) => {
+                  const filled = day.has_wear_log;
+                  const isToday = day.date === todayKey;
+                  return (
+                    <Pressable
+                      key={day.date}
+                      onPress={() => push(day.primary_event_id ? `/wear/${day.primary_event_id}` : "/log-outfit")}
+                      style={[
+                        styles.calendarDay,
+                        filled ? styles.calendarDayFilled : null,
+                        isToday ? styles.calendarDayToday : null
+                      ]}
+                    >
+                      <AppText style={[styles.calendarDayLabel, filled ? styles.calendarDayLabelFilled : null]}>
+                        {new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" }).slice(0, 3)}
+                      </AppText>
+                      <AppText style={[styles.calendarDayNumber, filled ? styles.calendarDayLabelFilled : null]}>
+                        {new Date(`${day.date}T12:00:00`).getDate()}
+                      </AppText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          </View>
+        </>
+      )}
 
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <AppText style={styles.sectionTitle}>Last 14 days</AppText>
-          <AppText style={styles.sectionMeta}>Tap a day to open it</AppText>
-        </View>
-
-        <View style={[styles.calendarCard, featureShadows.sm]}>
-          <View style={styles.calendarGrid}>
-            {calendar.days.map((day) => {
-              const filled = day.has_wear_log;
-              const isToday = day.date === todayKey;
-              return (
-                <Pressable
-                  key={day.date}
-                  onPress={() => push(day.primary_event_id ? `/wear/${day.primary_event_id}` : "/log-outfit")}
-                  style={[
-                    styles.calendarDay,
-                    filled ? styles.calendarDayFilled : null,
-                    isToday ? styles.calendarDayToday : null
-                  ]}
-                >
-                  <AppText style={[styles.calendarDayLabel, filled ? styles.calendarDayLabelFilled : null]}>
-                    {new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" }).slice(0, 3)}
-                  </AppText>
-                  <AppText style={[styles.calendarDayNumber, filled ? styles.calendarDayLabelFilled : null]}>
-                    {new Date(`${day.date}T12:00:00`).getDate()}
-                  </AppText>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <AppText style={styles.sectionTitle}>Recent wear logs</AppText>
+          <AppText style={styles.sectionTitle}>{isDayView ? `${heading} OOTDs` : "Recent wear logs"}</AppText>
           <AppText style={styles.sectionMeta}>
             {timeline.items.length} {timeline.items.length === 1 ? "entry" : "entries"}
           </AppText>
@@ -156,9 +193,13 @@ export default function WearTimelineScreen() {
           </View>
         ) : timeline.items.length === 0 ? (
           <View style={styles.noticeCard}>
-            <AppText style={styles.noticeTitle}>No wear logs yet</AppText>
+            <AppText style={styles.noticeTitle}>
+              {isDayView ? "No outfits logged on this day" : "No wear logs yet"}
+            </AppText>
             <AppText style={styles.noticeBody}>
-              Start with a closet-based or photo-based wear log and it will appear here.
+              {isDayView
+                ? "Log one or more OOTDs and Tenue will keep each look separate here."
+                : "Start with a closet-based or photo-based wear log and it will appear here."}
             </AppText>
           </View>
         ) : (

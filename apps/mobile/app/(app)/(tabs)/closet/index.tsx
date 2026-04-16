@@ -356,6 +356,7 @@ export default function ClosetBrowseScreen() {
           {activeTab === "processing" ? (
             <ProcessingTab
               onOpenItem={(reviewItemId) => router.push(`/review/${reviewItemId}` as Href)}
+              onRefreshProcessing={() => reviewRefreshRef.current()}
               readyCount={needsReviewCount}
               sections={processingSections}
             />
@@ -421,7 +422,7 @@ export default function ClosetBrowseScreen() {
                       return;
                     }
 
-                    router.push("/review" as Href);
+                    router.push("/closet?tab=processing" as Href);
                   }}
                   style={({ pressed }) => [
                     styles.pendingBanner,
@@ -456,7 +457,7 @@ export default function ClosetBrowseScreen() {
                 </View>
               ) : null}
 
-              {closet.isLoading ? (
+              {closet.isLoading && sortedItems.length === 0 ? (
                 <View style={styles.grid}>
                   {[0, 1, 2, 3].map((index) => (
                     <SkeletonBlock key={index} height={250} style={styles.gridTile} />

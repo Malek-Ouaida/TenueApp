@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import type { ImagePickerAsset } from "expo-image-picker";
 
 import { ApiError } from "../lib/api";
@@ -23,6 +23,8 @@ import {
   retryClosetReview
 } from "./client";
 import {
+  getClosetBatchUploadSnapshot,
+  subscribeToClosetBatchUpload,
   uploadClosetAsset,
   buildLogicalRetryKey,
   createUploadIdempotencyPath,
@@ -249,11 +251,21 @@ export function useReviewQueue(
   options: { disableCache?: boolean } = {}
 ) {
   const disableCache = options.disableCache ?? false;
-  const cacheKey = !disableCache && accessToken ? buildReviewQueueCacheKey(accessToken, limit) : null;
-  const cachedQueue = cacheKey ? getCachedReviewQueue(cacheKey) : null;
-  const [items, setItems] = useState<ClosetDraftSnapshot[]>(cachedQueue?.items ?? []);
-  const [nextCursor, setNextCursor] = useState<string | null>(cachedQueue?.nextCursor ?? null);
-  const [isLoading, setIsLoading] = useState(cachedQueue == null);
+  const [items, setItems] = useState<ClosetDraftSnapshot[]>(() => {
+    if (disableCache || !accessToken) {
+      return [];
+    }
+
+    return getCachedReviewQueue(buildReviewQueueCacheKey(accessToken, limit))?.items ?? [];
+  });
+  const [nextCursor, setNextCursor] = useState<string | null>(() => {
+    if (disableCache || !accessToken) {
+      return null;
+    }
+
+    return getCachedReviewQueue(buildReviewQueueCacheKey(accessToken, limit))?.nextCursor ?? null;
+  });
+  const [isLoading, setIsLoading] = useState(() => disableCache || !accessToken || items.length === 0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -291,6 +303,7 @@ export function useReviewQueue(
       startTransition(() => {
         setItems((current) => {
           const nextItems = mode === "append" ? appendUniqueItems(current, response.items) : response.items;
+          const cacheKey = !disableCache ? buildReviewQueueCacheKey(accessToken, limit) : null;
           if (cacheKey) {
             storeReviewQueue(cacheKey, {
               items: nextItems,
@@ -318,7 +331,11 @@ export function useReviewQueue(
       return;
     }
 
-    if (cachedQueue && !disableCache) {
+    const cachedQueue = !disableCache
+      ? getCachedReviewQueue(buildReviewQueueCacheKey(accessToken, limit))
+      : null;
+
+    if (cachedQueue) {
       setItems(cachedQueue.items);
       setNextCursor(cachedQueue.nextCursor);
       setIsLoading(false);
@@ -330,7 +347,7 @@ export function useReviewQueue(
     setNextCursor(null);
     setIsLoading(true);
     void load(undefined, "replace");
-  }, [accessToken, cachedQueue, disableCache, limit]);
+  }, [accessToken, disableCache, limit]);
 
   return {
     error,
@@ -359,6 +376,7 @@ export function useConfirmedClosetBrowse(
   const [items, setItems] = useState<ClosetBrowseListItemSnapshot[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -367,11 +385,14 @@ export function useConfirmedClosetBrowse(
       setItems([]);
       setNextCursor(null);
       setIsLoading(false);
+      setIsRefreshing(false);
       return;
     }
 
     if (mode === "append") {
       setIsLoadingMore(true);
+    } else if (items.length > 0) {
+      setIsRefreshing(true);
     } else {
       setIsLoading(true);
     }
@@ -392,6 +413,7 @@ export function useConfirmedClosetBrowse(
       setError(loadError instanceof Error ? loadError.message : "Closet items could not be loaded.");
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
       setIsLoadingMore(false);
     }
   }
@@ -413,6 +435,7 @@ export function useConfirmedClosetBrowse(
   return {
     error,
     isLoading,
+    isRefreshing,
     isLoadingMore,
     items,
     nextCursor,
@@ -438,7 +461,7 @@ export function useClosetItemDetail(
   const [isRestoring, setIsRestoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!accessToken || !itemId) {
       setDetail(null);
       setIsLoading(false);
@@ -458,11 +481,11 @@ export function useClosetItemDetail(
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [accessToken, includeArchived, itemId]);
 
   useEffect(() => {
     void load();
-  }, [accessToken, includeArchived, itemId]);
+  }, [load]);
 
   async function archive() {
     if (!accessToken || !itemId) {
@@ -940,4 +963,12 @@ export function useClosetUpload(accessToken?: string | null) {
     selectAndUpload,
     stage
   };
+}
+
+export function useClosetBatchUpload() {
+  const [snapshot, setSnapshot] = useState(() => getClosetBatchUploadSnapshot());
+
+  useEffect(() => subscribeToClosetBatchUpload(setSnapshot), []);
+
+  return snapshot;
 }

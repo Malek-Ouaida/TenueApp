@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useFocusEffect, useLocalSearchParams, type Href } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   PanResponder,
   Pressable,
@@ -99,6 +99,7 @@ export default function ClosetItemDetailScreen() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [offsetX, setOffsetX] = useState(0);
+  const detailRefreshRef = useRef(detail.refresh);
 
   const orderedItems = browse.items;
   const currentIndex = Math.max(
@@ -109,10 +110,14 @@ export default function ClosetItemDetailScreen() {
   const nextItem = currentIndex < orderedItems.length - 1 ? orderedItems[currentIndex + 1] : null;
   const usage = itemId ? usageIndex.snapshot.byItemId[itemId] : null;
 
+  useEffect(() => {
+    detailRefreshRef.current = detail.refresh;
+  }, [detail.refresh]);
+
   useFocusEffect(
     useCallback(() => {
-      void detail.refresh();
-    }, [detail.refresh])
+      void detailRefreshRef.current();
+    }, [])
   );
 
   useEffect(() => {

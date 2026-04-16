@@ -26,6 +26,7 @@ type ProfileCalendarCell =
   | {
       dateKey: string;
       dayNumber: number;
+      eventCount: number;
       hasWearLog: boolean;
       imageUrl: string | null;
       isFuture: boolean;
@@ -33,6 +34,16 @@ type ProfileCalendarCell =
       primaryEventId: string | null;
     }
   | null;
+
+type ProfileTimelineEntry = {
+  dateKey: string;
+  eventCount: number;
+  id: string;
+  imageUrl: string | null;
+  itemCount: number;
+  title: string;
+  wornAt: string;
+};
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const MONTH_NAMES = [
@@ -98,6 +109,15 @@ function buildMonthCells(
   monthDate: Date,
   days: Array<{
     date: string;
+    event_count: number;
+    events: Array<{
+      id: string;
+      item_count: number;
+      worn_at: string;
+      cover_image: { url: string } | null;
+      title: string | null;
+      context: string | null;
+    }>;
     primary_event_id: string | null;
     primary_cover_image: { url: string } | null;
     has_wear_log: boolean;
@@ -124,6 +144,7 @@ function buildMonthCells(
     cells.push({
       dateKey,
       dayNumber,
+      eventCount: snapshot?.event_count ?? 0,
       hasWearLog: Boolean(snapshot?.has_wear_log && snapshot.primary_event_id),
       imageUrl: snapshot?.primary_cover_image?.url ?? null,
       isFuture: date.getTime() > now.getTime(),
@@ -164,7 +185,22 @@ function formatTimelineLabel(dateKey: string) {
   };
 }
 
-function push(href: string) {
+function profileDayHref(cell: Exclude<ProfileCalendarCell, null>): Href {
+  if (!cell.hasWearLog || !cell.primaryEventId) {
+    return "/log-outfit" as Href;
+  }
+
+  if (cell.eventCount > 1) {
+    return ({
+      pathname: "/wear",
+      params: { date: cell.dateKey }
+    } as unknown) as Href;
+  }
+
+  return `/wear/${cell.primaryEventId}` as Href;
+}
+
+function push(href: string | Href) {
   router.push(href as Href);
 }
 
@@ -202,18 +238,21 @@ export default function ProfileScreen() {
     () => buildMonthCells(visibleMonth, monthCalendar.days, todayKey),
     [monthCalendar.days, todayKey, visibleMonth]
   );
-  const timelineEntries = useMemo(
+  const timelineEntries = useMemo<ProfileTimelineEntry[]>(
     () =>
       monthCalendar.days
-        .filter((day) => Boolean(day.primary_event_id))
-        .sort((left, right) => right.date.localeCompare(left.date))
-        .map((day) => ({
-          id: day.primary_event_id!,
-          dateKey: day.date,
-          imageUrl: day.primary_cover_image?.url ?? null,
-          itemCount: day.item_count,
-          title: day.outfit_title ?? "Outfit logged"
-        })),
+        .flatMap((day) =>
+          day.events.map((event) => ({
+            dateKey: day.date,
+            eventCount: day.event_count,
+            id: event.id,
+            imageUrl: event.cover_image?.url ?? day.primary_cover_image?.url ?? null,
+            itemCount: event.item_count,
+            title: event.title ?? event.context ?? day.outfit_title ?? "Outfit logged",
+            wornAt: event.worn_at
+          }))
+        )
+        .sort((left, right) => right.wornAt.localeCompare(left.wornAt)),
     [monthCalendar.days]
   );
   const displayTitle = buildProfileDisplayName(profile.profile, user?.email);
@@ -354,7 +393,7 @@ export default function ProfileScreen() {
                 </View>
 
                 <AppText style={styles.monthDescriptor}>
-                  Tap a logged day to open the outfit. Empty days go straight to logging.
+                  Tap a logged day to open it. Days with multiple OOTDs open that day&apos;s list.
                 </AppText>
 
                 {monthCalendar.error ? (
@@ -385,9 +424,7 @@ export default function ProfileScreen() {
                               <Pressable
                                 key={cell.dateKey}
                                 disabled={cell.isFuture}
-                                onPress={() =>
-                                  push(cell.primaryEventId ? `/wear/${cell.primaryEventId}` : "/log-outfit")
-                                }
+                                onPress={() => push(profileDayHref(cell))}
                                 style={({ pressed }) => [
                                   styles.calendarDay,
                                   cell.hasWearLog ? styles.calendarDayFilled : null,
@@ -408,6 +445,13 @@ export default function ProfileScreen() {
                                 >
                                   {cell.dayNumber}
                                 </AppText>
+                                {cell.eventCount > 1 ? (
+                                  <View style={styles.calendarEventBadge}>
+                                    <AppText style={styles.calendarEventBadgeLabel}>
+                                      +{cell.eventCount - 1}
+                                    </AppText>
+                                  </View>
+                                ) : null}
                               </Pressable>
                             ) : (
                               <View key={`spacer-${weekIndex}-${dayIndex}`} style={styles.calendarSpacer} />
@@ -458,6 +502,7 @@ export default function ProfileScreen() {
                             <AppText style={styles.timelineMeta}>Outfit logged</AppText>
                             <AppText numberOfLines={2} style={styles.timelineNote}>
                               {entry.title} · {entry.itemCount} items
+                              {entry.eventCount > 1 ? ` · ${entry.eventCount} looks that day` : ""}
                             </AppText>
                           </View>
 
@@ -831,6 +876,20 @@ const styles = StyleSheet.create({
     color: featurePalette.muted
   },
   calendarDayNumberFilled: {
+    color: "#FFFFFF"
+  },
+  calendarEventBadge: {
+    marginTop: "auto",
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 255, 255, 0.18)",
+    paddingHorizontal: 6,
+    paddingVertical: 3
+  },
+  calendarEventBadgeLabel: {
+    fontFamily: fontFamilies.sansBold,
+    fontSize: 10,
+    lineHeight: 12,
     color: "#FFFFFF"
   },
   calendarSpacer: {

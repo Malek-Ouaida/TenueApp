@@ -13,7 +13,12 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "../auth/provider";
-import { selectImagesFromLibrary, selectSingleImage, uploadClosetAssets } from "../closet/upload";
+import {
+  queueClosetAssetsForUpload,
+  selectImagesFromLibrary,
+  selectSingleImage,
+  uploadClosetAssets
+} from "../closet/upload";
 import { useOutfits } from "../outfits/provider";
 import { featurePalette, featureShadows } from "../theme/feature";
 import {
@@ -170,15 +175,11 @@ export function TenueTabBar({ navigation, state }: TenueTabBarProps) {
         return;
       }
 
-      const drafts = await uploadClosetAssets({
+      queueClosetAssetsForUpload({
         accessToken: session.access_token,
         assets
       });
       await triggerSuccessHaptic();
-      if (!drafts.length) {
-        return;
-      }
-
       router.push("/closet?tab=processing" as Href);
     } catch {
       await triggerErrorHaptic();

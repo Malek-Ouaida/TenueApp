@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError } from "../lib/api";
 import { getMyProfile, updateMyProfile } from "./client";
@@ -14,6 +14,11 @@ export function useProfile({ accessToken, onUnauthorized }: UseProfileOptions) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const onUnauthorizedRef = useRef(onUnauthorized);
+
+  useEffect(() => {
+    onUnauthorizedRef.current = onUnauthorized;
+  }, [onUnauthorized]);
 
   useEffect(() => {
     let active = true;
@@ -37,7 +42,7 @@ export function useProfile({ accessToken, onUnauthorized }: UseProfileOptions) {
         setProfile(nextProfile);
       } catch (loadError) {
         if (loadError instanceof ApiError && loadError.status === 401) {
-          await onUnauthorized?.();
+          await onUnauthorizedRef.current?.();
           return;
         }
 
@@ -56,7 +61,7 @@ export function useProfile({ accessToken, onUnauthorized }: UseProfileOptions) {
     return () => {
       active = false;
     };
-  }, [accessToken, onUnauthorized]);
+  }, [accessToken]);
 
   async function saveProfile(payload: UpdateProfilePayload) {
     if (!accessToken) {
@@ -72,7 +77,7 @@ export function useProfile({ accessToken, onUnauthorized }: UseProfileOptions) {
       return nextProfile;
     } catch (saveError) {
       if (saveError instanceof ApiError && saveError.status === 401) {
-        await onUnauthorized?.();
+        await onUnauthorizedRef.current?.();
         return null;
       }
 
