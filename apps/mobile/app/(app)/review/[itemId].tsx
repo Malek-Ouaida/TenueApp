@@ -286,7 +286,12 @@ function LegacyReviewItemScreen({ itemId }: { itemId: string }) {
     >
       <View style={styles.topRow}>
         <BrandMark variant="wordmark" subtle />
-        <Button label="Queue" onPress={() => router.replace("/review" as Href)} size="sm" variant="secondary" />
+        <Button
+          label="Processing"
+          onPress={() => router.replace("/closet?tab=processing" as Href)}
+          size="sm"
+          variant="secondary"
+        />
       </View>
 
       {reviewFlow.isLoading ? (

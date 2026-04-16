@@ -4,8 +4,16 @@ import { router, type Href } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, Pressable, StyleSheet, View } from "react-native";
 
+import { useAuth } from "../auth/provider";
+import { useClosetBatchUpload, useClosetUpload } from "./hooks";
+import {
+  triggerErrorHaptic,
+  triggerSelectionHaptic,
+  triggerSuccessHaptic
+} from "../lib/haptics";
 import { fontFamilies } from "../theme";
-import { AppText } from "../ui";
+import { AppText, Button, ModalSheet } from "../ui";
+import { queueClosetAssetsForUpload, selectImagesFromLibrary } from "./upload";
 import { getDraftPrimaryImage } from "./status";
 import type { ClosetDraftSnapshot, ClosetQueueSection } from "./types";
 
@@ -27,6 +35,7 @@ const palette = {
 
 type ProcessingTabProps = {
   onOpenItem: (itemId: string) => void;
+  onRefreshProcessing?: () => Promise<void> | void;
   readyCount?: number;
   sections: ClosetQueueSection[];
 };
@@ -135,9 +144,18 @@ function ProcessingProgressBar({
   );
 }
 
-export function ProcessingTab({ onOpenItem, readyCount = 0, sections }: ProcessingTabProps) {
+export function ProcessingTab({
+  onOpenItem,
+  onRefreshProcessing,
+  readyCount = 0,
+  sections
+}: ProcessingTabProps) {
+  const { session } = useAuth();
+  const upload = useClosetUpload(session?.access_token);
+  const batchUpload = useClosetBatchUpload();
   const [completedItems, setCompletedItems] = useState<CompletedProcessingItem[]>([]);
   const previousProcessingRef = useRef<Map<string, ClosetDraftSnapshot>>(new Map());
+  const [showAddSheet, setShowAddSheet] = useState(false);
 
   const liveEntries = useMemo(
     () =>
@@ -213,87 +231,208 @@ export function ProcessingTab({ onOpenItem, readyCount = 0, sections }: Processi
     return () => clearTimeout(timeout);
   }, [completedItems]);
 
+  async function handleAddMore(source: "camera" | "library") {
+    if (source === "library") {
+      await handleAddManyFromLibrary();
+      return;
+    }
+
+    try {
+      await triggerSelectionHaptic();
+      const item = await upload.selectAndUpload(source);
+      if (!item) {
+        return;
+      }
+
+      await triggerSuccessHaptic();
+      setShowAddSheet(false);
+      await onRefreshProcessing?.();
+    } catch {
+      await triggerErrorHaptic();
+    }
+  }
+
+  async function handleAddManyFromLibrary() {
+    try {
+      if (!session?.access_token || batchUpload.isRunning) {
+        return;
+      }
+
+      await triggerSelectionHaptic();
+      const assets = await selectImagesFromLibrary({ multiple: true, selectionLimit: 10 });
+      if (!assets.length) {
+        return;
+      }
+
+      queueClosetAssetsForUpload({
+        accessToken: session.access_token,
+        assets
+      });
+
+      await triggerSuccessHaptic();
+      setShowAddSheet(false);
+      await onRefreshProcessing?.();
+    } catch {
+      await triggerErrorHaptic();
+    }
+  }
+
+  async function retryUpload() {
+    try {
+      const item = await upload.retryLastUpload();
+      if (!item) {
+        return;
+      }
+
+      await triggerSuccessHaptic();
+      setShowAddSheet(false);
+      await onRefreshProcessing?.();
+    } catch {
+      await triggerErrorHaptic();
+    }
+  }
+
   return (
-    <View style={styles.root}>
-      <Pressable
-        onPress={() => router.push("/add" as Href)}
-        style={({ pressed }) => [styles.uploadPrompt, pressed ? styles.pressed : null]}
+    <>
+      <View style={styles.root}>
+        <Pressable
+          onPress={() => setShowAddSheet(true)}
+          style={({ pressed }) => [styles.uploadPrompt, pressed ? styles.pressed : null]}
+        >
+          <View style={styles.uploadIconWrap}>
+            <Feather color={palette.darkText} name="plus" size={20} />
+          </View>
+          <View style={styles.uploadCopy}>
+            <AppText color={palette.darkText} style={styles.uploadTitle}>
+              Add more photos
+            </AppText>
+            <AppText color={palette.warmGray} style={styles.uploadBody}>
+              Keep going without leaving processing
+            </AppText>
+          </View>
+        </Pressable>
+
+        {items.length === 0 ? (
+          <View style={styles.emptyState}>
+            <AppText color={palette.warmGray} style={styles.emptyTitle}>
+              Nothing processing right now
+            </AppText>
+            <AppText color={palette.warmGray} style={styles.emptyBody}>
+              {batchUpload.stage
+                ? batchUpload.stage
+                : readyCount > 0
+                ? `${readyCount} item${readyCount === 1 ? " is" : "s are"} ready to confirm in your closet.`
+                : "Upload a photo to get started"}
+            </AppText>
+            {readyCount > 0 ? (
+              <Pressable
+                onPress={() => router.push("/review" as Href)}
+                style={({ pressed }) => [styles.readyButton, pressed ? styles.pressed : null]}
+              >
+                <AppText color={palette.warmWhite} style={styles.readyButtonLabel}>
+                  Open Confirmation
+                </AppText>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : (
+          <View style={styles.list}>
+            {items.map(({ initialProgress, item, sectionKey }) => {
+              const imageUrl = getDraftPrimaryImage(item)?.url;
+              const visual = getVisualState(item, sectionKey);
+
+              return (
+                <View key={item.id} style={styles.card}>
+                  <Pressable
+                    onPress={() => onOpenItem(item.id)}
+                    style={({ pressed }) => [styles.cardContent, pressed ? styles.pressed : null]}
+                  >
+                    <View style={styles.thumbnailWrap}>
+                      {imageUrl ? (
+                        <Image contentFit="cover" source={{ uri: imageUrl }} style={styles.thumbnail} />
+                      ) : (
+                        <View style={[styles.thumbnail, styles.thumbnailFallback]} />
+                      )}
+                    </View>
+
+                    <View style={styles.copy}>
+                      <AppText color={palette.darkText} numberOfLines={1} style={styles.cardTitle}>
+                        {item.title ?? "New upload"}
+                      </AppText>
+                      <AppText color={palette.warmGray} numberOfLines={2} style={styles.cardStatus}>
+                        {item.failure_summary ?? STATUS_LABELS[visual.status]}
+                      </AppText>
+                      {visual.showProgress ? (
+                        <ProcessingProgressBar
+                          initialProgress={initialProgress}
+                          progress={visual.progress}
+                        />
+                      ) : null}
+                    </View>
+                  </Pressable>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </View>
+
+      <ModalSheet
+        onClose={() => {
+          setShowAddSheet(false);
+        }}
+        visible={showAddSheet}
       >
-        <View style={styles.uploadIconWrap}>
-          <Feather color={palette.darkText} name="plus" size={20} />
-        </View>
-        <View style={styles.uploadCopy}>
-          <AppText color={palette.darkText} style={styles.uploadTitle}>
-            Add more photos
-          </AppText>
-          <AppText color={palette.warmGray} style={styles.uploadBody}>
-            Keep going - I&apos;ll handle the rest
-          </AppText>
-        </View>
-      </Pressable>
+        <AppText color={palette.darkText} style={styles.sheetTitle}>
+          Add to closet
+        </AppText>
+        <AppText color={palette.warmGray} style={styles.sheetBody}>
+          Queue closet photos locally and send them through one at a time.
+        </AppText>
 
-      {items.length === 0 ? (
-        <View style={styles.emptyState}>
-          <AppText color={palette.warmGray} style={styles.emptyTitle}>
-            Nothing processing right now
-          </AppText>
-          <AppText color={palette.warmGray} style={styles.emptyBody}>
-            {readyCount > 0
-              ? `${readyCount} item${readyCount === 1 ? " is" : "s are"} ready to confirm in your closet.`
-              : "Upload a photo to get started"}
-          </AppText>
-          {readyCount > 0 ? (
-            <Pressable
-              onPress={() => router.push("/review" as Href)}
-              style={({ pressed }) => [styles.readyButton, pressed ? styles.pressed : null]}
-            >
-              <AppText color={palette.warmWhite} style={styles.readyButtonLabel}>
-                Open Confirmation
-              </AppText>
-            </Pressable>
-          ) : null}
+        <View style={styles.sheetActions}>
+          <Button
+            label="Take garment photo"
+            loading={upload.isUploading}
+            onPress={() => void handleAddMore("camera")}
+            tone="organize"
+          />
+          <Button
+            label="Choose up to 10 from library"
+            disabled={upload.isUploading || batchUpload.isRunning}
+            onPress={() => void handleAddMore("library")}
+            variant="secondary"
+          />
         </View>
-      ) : (
-        <View style={styles.list}>
-          {items.map(({ initialProgress, item, sectionKey }) => {
-            const imageUrl = getDraftPrimaryImage(item)?.url;
-            const visual = getVisualState(item, sectionKey);
 
-            return (
-              <View key={item.id} style={styles.card}>
-                <Pressable
-                  onPress={() => onOpenItem(item.id)}
-                  style={({ pressed }) => [styles.cardContent, pressed ? styles.pressed : null]}
-                >
-                  <View style={styles.thumbnailWrap}>
-                    {imageUrl ? (
-                      <Image contentFit="cover" source={{ uri: imageUrl }} style={styles.thumbnail} />
-                    ) : (
-                      <View style={[styles.thumbnail, styles.thumbnailFallback]} />
-                    )}
-                  </View>
+        {batchUpload.stage || upload.stage ? (
+          <View style={styles.sheetNotice}>
+            <AppText color={palette.darkText} style={styles.sheetNoticeTitle}>
+              Upload status
+            </AppText>
+            <AppText color={palette.warmGray} style={styles.sheetNoticeBody}>
+              {batchUpload.stage ?? upload.stage}
+            </AppText>
+          </View>
+        ) : null}
 
-                  <View style={styles.copy}>
-                    <AppText color={palette.darkText} numberOfLines={1} style={styles.cardTitle}>
-                      {item.title ?? "New upload"}
-                    </AppText>
-                    <AppText color={palette.warmGray} numberOfLines={2} style={styles.cardStatus}>
-                      {item.failure_summary ?? STATUS_LABELS[visual.status]}
-                    </AppText>
-                    {visual.showProgress ? (
-                      <ProcessingProgressBar
-                        initialProgress={initialProgress}
-                        progress={visual.progress}
-                      />
-                    ) : null}
-                  </View>
-                </Pressable>
-              </View>
-            );
-          })}
-        </View>
-      )}
-    </View>
+        {batchUpload.error || upload.error ? (
+          <View style={styles.sheetNotice}>
+            <AppText color={palette.coralText} style={styles.sheetNoticeBody}>
+              {batchUpload.error ?? upload.error}
+            </AppText>
+            {!batchUpload.error ? (
+              <Button
+                label="Retry last upload"
+                onPress={() => void retryUpload()}
+                size="sm"
+                variant="secondary"
+              />
+            ) : null}
+          </View>
+        ) : null}
+      </ModalSheet>
+    </>
   );
 }
 
@@ -342,6 +481,35 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.sansRegular,
     fontSize: 12,
     lineHeight: 16
+  },
+  sheetTitle: {
+    fontFamily: fontFamilies.serifSemiBold,
+    fontSize: 24,
+    lineHeight: 28
+  },
+  sheetBody: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 14,
+    lineHeight: 20
+  },
+  sheetActions: {
+    gap: 10
+  },
+  sheetNotice: {
+    gap: 8,
+    borderRadius: 20,
+    backgroundColor: palette.subtle,
+    padding: 14
+  },
+  sheetNoticeTitle: {
+    fontFamily: fontFamilies.sansSemiBold,
+    fontSize: 12,
+    lineHeight: 16
+  },
+  sheetNoticeBody: {
+    fontFamily: fontFamilies.sansRegular,
+    fontSize: 13,
+    lineHeight: 18
   },
   list: {
     gap: 12

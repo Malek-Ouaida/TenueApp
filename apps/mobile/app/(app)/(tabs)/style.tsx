@@ -33,8 +33,8 @@ export default function StyleScreen() {
         </AppText>
         <View style={styles.actionRow}>
           <Button
-            label="Clear Review"
-            onPress={() => router.push("/review" as Href)}
+            label="Open Processing"
+            onPress={() => router.push("/closet?tab=processing" as Href)}
             tone="review"
           />
           <Button

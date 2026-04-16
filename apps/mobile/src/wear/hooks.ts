@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useCallback, useEffect, useState } from "react";
 
 import { usePolling } from "../lib/hooks";
 import {
@@ -117,7 +117,7 @@ export function useWearCalendar(accessToken?: string | null, totalDays = 14) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!accessToken) {
       setDays([]);
       setIsLoading(false);
@@ -142,11 +142,11 @@ export function useWearCalendar(accessToken?: string | null, totalDays = 14) {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [accessToken, totalDays]);
 
   useEffect(() => {
     void load();
-  }, [accessToken, totalDays]);
+  }, [load]);
 
   return {
     days,
@@ -166,7 +166,7 @@ export function useWearCalendarRange(
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!accessToken || !startDate || !endDate) {
       setDays([]);
       setIsLoading(false);
@@ -188,11 +188,11 @@ export function useWearCalendarRange(
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [accessToken, endDate, startDate]);
 
   useEffect(() => {
     void load();
-  }, [accessToken, endDate, startDate]);
+  }, [load]);
 
   return {
     days,
